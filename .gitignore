@@ -1,0 +1,29 @@
+# Godot 4
+.godot/
+/android/
+
+# The addons this one uses are separate repositories. For local development, symlink them:
+#   ln -s ../../dot-core/addons/dot_core addons/dot_core
+# dot_core is the addon's only dependency; the menu demo also links dot-menu and its own.
+/addons/dot_core
+/addons/dot_menu
+/addons/dot_ui
+/addons/dot_settings
+/addons/dot_profile
+# The server suite section uses a real dot-server console and dot-server-query snapshot.
+/addons/dot_server
+/addons/dot_server_query
+
+# Rendered frames are looked at, not kept.
+/screenshots/
+
+# Exports
+build/
+export_presets.cfg
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/

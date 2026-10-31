@@ -1,0 +1,416 @@
+@icon("res://addons/dot_profiler/icon.svg")
+class_name DotProfiler
+extends Node
+
+## Watches every frame, names the system behind each one over budget, spots spikes on a fixed beat, and records reports.
+##
+## [codeblock]
+## var prof := DotProfiler.new()
+## add_child(prof)                       # registered as "dot_profiler"; off until profiler_enabled 1
+## prof.bind_console(console_local)      # profiler_* vars, profiler_record [s], profiler_stop, profiler_report
+## var res := prof.start_recording(30)   # later: res of stop_recording() is the JSON path
+## [/codeblock]
+##
+## Systems report their cost through dot-core's [DotFrameCost]; a frame with none is blamed on the engine phase
+## (physics, script, render, wait) that took longest, with the counter deltas [DotHitchLog] saw as evidence.
+
+const CHANNEL := "dot.profiler"
+const SERVICE := &"dot_profiler"
+## A system must be at least this share of a spike to be its cause; below it the engine phase is.
+const CAUSE_SHARE := 0.25
+
+## A frame over budget, attributed: {t, ms, cause, what, hints, period, physics, script, render, wait, systems}.
+signal spike(info: Dictionary)
+signal recording_started(seconds: float)
+## [param result] is [method stop_recording]'s: its value is the JSON path.
+signal recording_finished(result: DotResult)
+
+## The settings; made from defaults (then file, environment, command line) when left empty.
+@export var config: DotProfilerConfig
+## The layered config file read in [method Node._ready]; "" skips the file layer.
+@export var config_file: String = ""
+## Registers this node as [constant SERVICE] so menus and tools find it without a path.
+@export var register_as_service: bool = true
+
+## Returns one metrics sample (a Dictionary) for a recording, taken profiler_sample_hz times a second.
+## The default is memory and object counts; [DotProfilerServer] adds network, players and bots.
+var sampler: Callable = DotProfilerMetrics.memory
+
+var _hitch: DotHitchLog = null
+var _overlay: CanvasLayer = null
+var _periods := {}
+var _all_period := DotProfilerPeriod.new()
+var _last_warn := {}
+var _suppressed := {}
+var _avg_systems := {}
+var _avg_phases := {"physics": 0.0, "script": 0.0, "render": 0.0, "wait": 0.0}
+var _avg_ms := 0.0
+var _spikes_seen := 0
+var _last_spike: Dictionary = {}
+var _by_cause := {}
+
+var _recording := false
+var _rec_started_usec := 0
+var _rec_seconds := 0.0
+var _rec_frames := PackedFloat32Array()
+var _rec_spikes: Array = []
+var _rec_systems := {}
+var _rec_phases := {}
+var _rec_samples: Array = []
+var _next_sample_usec := 0
+var _last_saved := ""
+var _stop_pending := false
+
+
+func _ready() -> void:
+	if config == null:
+		config = DotProfilerConfig.new()
+		var res := config.load_layered(config_file)
+		if not res.ok:
+			DotLog.warn(CHANNEL, "profiler settings: %s; using defaults" % res.error.message)
+			config = DotProfilerConfig.new()
+	config.changed.connect(_apply)
+	if register_as_service:
+		DotRegistry.register(SERVICE, self)
+	_apply()
+
+
+func _exit_tree() -> void:
+	_stop_watch()
+	DotFrameCost.reset()
+	if register_as_service:
+		DotRegistry.unregister_instance(SERVICE, self)
+
+
+## True while frames are being watched: enabled, overlay shown, or recording.
+func is_watching() -> bool:
+	return _hitch != null
+
+
+func is_recording() -> bool:
+	return _recording
+
+
+## Seconds since the recording began, or 0.
+func elapsed_s() -> float:
+	return (Time.get_ticks_usec() - _rec_started_usec) / 1.0e6 if _recording else 0.0
+
+
+## How long the current recording runs, or 0.
+func recording_length_s() -> float:
+	return _rec_seconds if _recording else 0.0
+
+
+## The JSON path of the last recording written, or "".
+func last_saved_path() -> String:
+	return _last_saved
+
+
+## Starts a recording of [param seconds] (the config's default when 0 or less); stops itself when done.
+func start_recording(seconds: float = 0.0) -> DotResult:
+	if _recording:
+		return DotResult.fail(DotError.CODE_STATE, "A recording is already running (%.0f s in)." % elapsed_s())
+	_rec_seconds = seconds if seconds > 0.0 else config.record_seconds
+	_recording = true
+	_rec_started_usec = Time.get_ticks_usec()
+	_rec_frames = PackedFloat32Array()
+	_rec_spikes = []
+	_rec_systems = {}
+	_rec_phases = {"physics": 0.0, "script": 0.0, "render": 0.0, "wait": 0.0}
+	_rec_samples = []
+	_next_sample_usec = 0
+	_apply()
+	DotLog.info(CHANNEL, "recording %.0f s of frames (budget %.1f ms)" % [_rec_seconds, config.budget_ms])
+	recording_started.emit(_rec_seconds)
+	return DotResult.success(_rec_seconds)
+
+
+## Ends the recording and writes it; the value is the JSON path.
+func stop_recording() -> DotResult:
+	if not _recording:
+		return DotResult.fail(DotError.CODE_STATE, "No recording is running.")
+	_recording = false
+	var report := build_report()
+	var res := DotProfilerReport.write(report, config.record_dir, config.keep_recordings)
+	_apply()
+	if res.ok:
+		_last_saved = res.value
+		DotLog.info(CHANNEL, "profile saved to %s (%d frames, %d spikes, p99 %.1f ms)" % [
+			_last_saved, report.frames, report.spike_count, report.p99_ms])
+	else:
+		DotLog.warn(CHANNEL, "profile not saved: %s" % res.error.message)
+	recording_finished.emit(res)
+	return res
+
+
+## The report of the recording so far (or the last one), without writing it.
+func build_report() -> Dictionary:
+	var scene := get_tree().current_scene
+	return DotProfilerReport.build(_rec_frames, _rec_spikes, _rec_systems, _rec_phases, {
+		"budget_ms": config.budget_ms, "seconds": _rec_seconds,
+		"scene": scene.scene_file_path if scene != null else "",
+		"period": DotProfilerPeriod.describe_found(_all_period.detect()),
+		"sample_hz": config.sample_hz, "samples": _rec_samples})
+
+
+## Recordings already written, newest first, at most [param n].
+func recent_recordings(n: int = 8) -> Array[Dictionary]:
+	return DotProfilerReport.list(config.record_dir).slice(0, n)
+
+
+## The [param n] costliest systems, smoothed: [{system, ms}]; engine phases fill in when no system reports.
+func top_costs(n: int = 6) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for s: Variant in _avg_systems:
+		out.append({"system": String(s), "ms": _avg_systems[s]})
+	for p: String in _avg_phases:
+		out.append({"system": "engine." + p, "ms": _avg_phases[p]})
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.ms > b.ms)
+	return out.slice(0, n)
+
+
+## Smoothed engine phases in ms: {physics, script, render, wait}; zero until watching.
+func phase_ms() -> Dictionary:
+	return _avg_phases.duplicate()
+
+
+## Spikes seen per cause since start: {cause: {spikes, worst_ms, period}}.
+func spikes_by_cause() -> Dictionary:
+	var out := {}
+	for c: String in _by_cause:
+		out[c] = _by_cause[c].duplicate()
+		out[c]["period"] = DotProfilerPeriod.describe_found(_periods[c].detect()) if _periods.has(c) else ""
+	return out
+
+
+## Smoothed frame time in ms, spikes seen, the last spike and the repeating beat, for the overlay.
+func status() -> Dictionary:
+	return {"ms": _avg_ms, "spikes": _spikes_seen, "last": _last_spike,
+		"period": DotProfilerPeriod.describe_found(_all_period.detect()), "recording": _recording,
+		"elapsed_s": elapsed_s(), "budget_ms": config.budget_ms}
+
+
+## The beat spikes blamed on [param cause] repeat on ("" for all), or {}.
+func period_of(cause: String = "") -> Dictionary:
+	if cause == "":
+		return _all_period.detect()
+	var p: DotProfilerPeriod = _periods.get(cause)
+	return p.detect() if p != null else {}
+
+
+## Shows or hides the overlay; the same as setting profiler_overlay.
+func set_overlay_visible(on: bool) -> void:
+	var _r := config.set_text("overlay", "1" if on else "0")
+
+
+## Registers profiler_* variables and the record, stop and report commands on a dot-console [code]DotConsoleLocal[/code].
+func bind_console(local: Object) -> void:
+	if local == null or not local.has_method(&"add_command"):
+		return
+	for key in config.config_keys():
+		local.call(&"add_var", DotProfilerConfig.cvar_name(key), "Profiler: %s." % key,
+			config.text_of.bind(key), _set_from_console.bind(key))
+	var rec := func(args: PackedStringArray) -> Variant:
+		return start_recording(args[0].to_float() if not args.is_empty() else 0.0)
+	local.call(&"add_command", &"profiler_record", "Record frames for N seconds (default profiler_record_seconds) to user://.", rec)
+	local.call(&"add_command", &"record", "Same as profiler_record.", rec)
+	local.call(&"add_command", &"profiler_stop", "Stop the recording and write the report.",
+		func(_a: PackedStringArray) -> Variant: return stop_recording())
+	local.call(&"add_command", &"profiler_report", "The top costs and the spike beat now.",
+		func(_a: PackedStringArray) -> Variant: return describe_lines())
+
+
+## The panel the settings menu shows: overlay toggle, record and stop, the saved path and recent recordings.
+## [param kit] is dot-menu's DotMenuKit, used by duck typing; null builds plain controls.
+func make_menu_panel(kit: Object = null) -> Control:
+	var panel := DotProfilerPanel.new()
+	panel.setup(self, kit)
+	return panel
+
+
+func describe() -> String:
+	return "DotProfiler watching=%s recording=%s spikes=%d %s" % [is_watching(), _recording, _spikes_seen,
+		DotProfilerPeriod.describe_found(_all_period.detect())]
+
+
+func describe_lines() -> PackedStringArray:
+	var out := PackedStringArray([describe()])
+	out.append("  frame %.1f ms (budget %.1f)" % [_avg_ms, config.budget_ms])
+	for row in top_costs(config.overlay_top):
+		out.append("  %-28s %.2f ms" % [row.system, row.ms])
+	if not _last_spike.is_empty():
+		out.append("  last spike: " + DotProfilerReport.spike_line(_last_spike))
+	return out
+
+
+## Attributes one [DotHitchLog] hitch record: the system that took at least [constant CAUSE_SHARE] of it,
+## else "engine.<phase>", plus hints read from its counter deltas, marks and new nodes.
+static func attribute(rec: Dictionary) -> Dictionary:
+	var ms: float = rec.get("ms", 0.0)
+	var systems: Dictionary = rec.get("systems", {})
+	var cause := ""
+	var what := ""
+	var top_ms := 0.0
+	for s: Variant in systems:
+		var v: float = systems[s].get("ms", 0.0)
+		if v > top_ms:
+			top_ms = v
+			cause = String(s)
+			what = systems[s].get("what", "")
+	if cause == "" or top_ms < ms * CAUSE_SHARE:
+		var phase := "script"
+		for p: String in ["physics", "script", "render", "wait"]:
+			if float(rec.get(p, 0.0)) > float(rec.get(phase, 0.0)):
+				phase = p
+		cause = "engine." + phase
+		what = ""
+	var hints: Array[String] = []
+	var d: Dictionary = rec.get("deltas", {})
+	if int(d.get("compile", 0)) > 0:
+		hints.append("%d shader compile(s)" % d.compile)
+	if int(d.get("added", 0)) > 0:
+		hints.append("+%d nodes" % d.added)
+	if int(d.get("res", 0)) > 0:
+		hints.append("+%d resources" % d.res)
+	if int(d.get("kb", 0)) > 512:
+		hints.append("+%d KB static memory" % d.kb)
+	if int(d.get("logs", 0)) > 0:
+		hints.append("%d log line(s)" % d.logs)
+	var added: Array = rec.get("added", [])
+	if not added.is_empty():
+		hints.append("new=" + ", ".join(added.slice(0, 3)))
+	var marks: Array = rec.get("marks", [])
+	if not marks.is_empty():
+		hints.append("marks=" + ", ".join(marks.slice(0, 3)))
+	var out := {"t": rec.get("t", 0.0), "ms": ms, "cause": cause, "what": what, "hints": hints, "period": ""}
+	for p: String in ["physics", "script", "render", "wait"]:
+		out[p] = rec.get(p, 0.0)
+	var sys_ms := {}
+	for s: Variant in systems:
+		sys_ms[String(s)] = systems[s].get("ms", 0.0)
+	out["systems"] = sys_ms
+	return out
+
+
+func _set_from_console(text: Variant, key: String) -> Variant:
+	return config.set_text(key, str(text))
+
+
+func _apply() -> void:
+	var want := config.enabled or config.overlay or _recording
+	if want and _hitch == null:
+		_hitch = DotHitchLog.new()
+		_hitch.keep = 64
+		_hitch.frame_measured.connect(_on_frame)
+		_hitch.start(get_tree())
+		DotLog.debug(CHANNEL, "watching frames, budget %.1f ms" % config.budget_ms)
+	elif not want and _hitch != null:
+		_stop_watch()
+	if _hitch != null:
+		_hitch.threshold_ms = config.budget_ms
+	DotFrameCost.enabled = want
+	for c: Variant in _periods:
+		_periods[c].tolerance = config.period_tolerance
+		_periods[c].min_spikes = config.period_min_spikes
+	_all_period.tolerance = config.period_tolerance
+	_all_period.min_spikes = config.period_min_spikes
+	_show_overlay(config.overlay)
+
+
+func _stop_watch() -> void:
+	if _hitch != null:
+		_hitch.stop()
+		_hitch = null
+	DotFrameCost.enabled = false
+
+
+func _show_overlay(on: bool) -> void:
+	if on and _overlay == null:
+		_overlay = DotProfilerOverlay.new()
+		_overlay.profiler = self
+		add_child(_overlay)
+	elif not on and _overlay != null:
+		_overlay.queue_free()
+		_overlay = null
+
+
+func _on_frame(rec: Dictionary) -> void:
+	var ms: float = rec.get("ms", 0.0)
+	var k := 0.1
+	_avg_ms = lerpf(_avg_ms, ms, k)
+	for p: String in _avg_phases:
+		_avg_phases[p] = lerpf(_avg_phases[p], float(rec.get(p, 0.0)), k)
+	var systems: Dictionary = rec.get("systems", {})
+	for s: Variant in _avg_systems.keys():
+		if not systems.has(s):
+			_avg_systems[s] = _avg_systems[s] * (1.0 - k)
+			if _avg_systems[s] < 0.005:
+				_avg_systems.erase(s)
+	for s: Variant in systems:
+		_avg_systems[s] = lerpf(_avg_systems.get(s, 0.0), float(systems[s].ms), k)
+	if _recording:
+		_rec_frames.append(ms)
+		for p: String in _rec_phases:
+			_rec_phases[p] += float(rec.get(p, 0.0))
+		for s: Variant in systems:
+			var row: Dictionary = _rec_systems.get(s, {"ms": 0.0, "calls": 0, "worst_ms": 0.0, "what": ""})
+			var r: Dictionary = systems[s]
+			row.ms += float(r.ms)
+			row.calls += int(r.calls)
+			if float(r.worst_ms) >= float(row.worst_ms):
+				row.worst_ms = r.worst_ms
+				if String(r.get("what", "")) != "":
+					row.what = r.what
+			_rec_systems[s] = row
+	if _recording and config.sample_hz > 0.0 and sampler.is_valid() and Time.get_ticks_usec() >= _next_sample_usec:
+		_next_sample_usec = Time.get_ticks_usec() + int(1.0e6 / config.sample_hz)
+		var row: Variant = sampler.call()
+		if row is Dictionary:
+			(row as Dictionary)["t"] = snappedf(elapsed_s(), 0.001)
+			_rec_samples.append(row)
+	if ms >= config.budget_ms:
+		_on_spike(rec)
+	if _recording and not _stop_pending and elapsed_s() >= _rec_seconds:
+		# Deferred: stopping disconnects the hitch log that is emitting this.
+		_stop_pending = true
+		_finish_recording.call_deferred()
+
+
+func _finish_recording() -> void:
+	_stop_pending = false
+	if _recording:
+		var _r := stop_recording()
+
+
+func _on_spike(rec: Dictionary) -> void:
+	var info := attribute(rec)
+	var cause: String = info.cause
+	_spikes_seen += 1
+	_all_period.add(info.t)
+	if not _periods.has(cause):
+		var p := DotProfilerPeriod.new()
+		p.tolerance = config.period_tolerance
+		p.min_spikes = config.period_min_spikes
+		_periods[cause] = p
+	_periods[cause].add(info.t)
+	info.period = DotProfilerPeriod.describe_found(_periods[cause].detect())
+	_last_spike = info
+	var tally: Dictionary = _by_cause.get(cause, {"spikes": 0, "worst_ms": 0.0})
+	tally.spikes += 1
+	tally.worst_ms = maxf(tally.worst_ms, info.ms)
+	_by_cause[cause] = tally
+	if _recording:
+		_rec_spikes.append(info)
+	spike.emit(info)
+	if not config.enabled:
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - float(_last_warn.get(cause, -1.0e9)) < config.warn_every_s:
+		_suppressed[cause] = int(_suppressed.get(cause, 0)) + 1
+		return
+	var skipped: int = _suppressed.get(cause, 0)
+	_last_warn[cause] = now
+	_suppressed[cause] = 0
+	DotLog.warn(CHANNEL, "frame %.1f ms over %.1f ms budget: %s%s" % [info.ms, config.budget_ms,
+		DotProfilerReport.spike_line(info), (" (+%d more since last)" % skipped) if skipped > 0 else ""],
+		{"cause": cause, "ms": info.ms, "period": info.period})
