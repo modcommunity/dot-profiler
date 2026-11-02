@@ -9,7 +9,6 @@ const REFRESH_S := 0.25
 var profiler: DotProfiler = null
 
 var _label: Label = null
-var _left := 0.0
 
 
 func _ready() -> void:
@@ -27,14 +26,15 @@ func _ready() -> void:
 	_label.add_theme_font_size_override(&"font_size", 14)
 	_label.add_theme_color_override(&"font_color", Color(0.9, 0.95, 1.0))
 	bg.add_child(_label)
+	# A timer, not _process: the text is rebuilt 4 times a second, never per frame.
+	var timer := Timer.new()
+	timer.wait_time = REFRESH_S
+	timer.timeout.connect(refresh)
+	add_child(timer)
+	timer.start()
 	refresh()
 
 
-func _process(delta: float) -> void:
-	_left -= delta
-	if _left <= 0.0:
-		_left = REFRESH_S
-		refresh()
 
 
 ## Redraws the text now.

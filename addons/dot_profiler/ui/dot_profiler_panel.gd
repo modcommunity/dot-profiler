@@ -56,6 +56,12 @@ func setup(profiler: DotProfiler, kit: Object = null) -> void:
 		actions.add_child(copy_button)
 	recent_label = _label("")
 	add_child(recent_label)
+	# A timer, not _process: the elapsed text changes a few times a second, not per frame.
+	var timer := Timer.new()
+	timer.wait_time = 0.1
+	timer.timeout.connect(_tick)
+	add_child(timer)
+	timer.start()
 	profiler.recording_started.connect(_on_started)
 	profiler.recording_finished.connect(_on_finished)
 	_refresh()
@@ -101,13 +107,14 @@ func download_last() -> void:
 		_show_result("Cannot hand the report to the browser: " + sent.error.message)
 
 
-func _process(_delta: float) -> void:
+func _tick() -> void:
 	if _profiler != null and _profiler.is_recording():
 		elapsed_label.text = "Recording  %.1f / %.0f s" % [_profiler.elapsed_s(), _profiler.recording_length_s()]
 
 
 func _on_started(_seconds: float) -> void:
 	_refresh()
+	_tick()
 
 
 func _on_finished(res: DotResult) -> void:
