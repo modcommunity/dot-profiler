@@ -96,8 +96,9 @@ func download_last() -> void:
 	if not text.ok:
 		_show_result("Cannot read the report: " + text.error.message)
 		return
-	var _r: Variant = DotWeb.eval("(function(){var b=new Blob([%s],{type:'text/plain'});var a=document.createElement('a');" % JSON.stringify(text.value)
-		+ "a.href=URL.createObjectURL(b);a.download=%s;document.body.appendChild(a);a.click();a.remove();})()" % JSON.stringify(p.get_file().get_basename() + ".txt"))
+	var sent := DotWeb.download_text(text.value, p.get_file().get_basename() + ".txt")
+	if not sent.ok:
+		_show_result("Cannot hand the report to the browser: " + sent.error.message)
 
 
 func _process(_delta: float) -> void:

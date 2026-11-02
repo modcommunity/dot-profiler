@@ -1,7 +1,7 @@
 extends Control
 
 ## Record and Stop through the settings panel in a browser, and whether the written report is still there after a reload.
-## `?press=1` presses Record, waits, presses Stop; any load publishes `window.__prof` = {recent, saved, failures, web} for a driver.
+## `?press=1` presses Record, waits, presses Stop; any load publishes `window.dotWeb.published.prof` (JSON) = {recent, saved, failures, web} for a driver.
 
 const DIR := "user://profiler_web"
 
@@ -28,7 +28,7 @@ func _ready() -> void:
 	_panel = _prof.make_menu_panel(kit) as DotProfilerPanel
 	body.add_child(_panel)
 	_publish("")
-	if DotWeb.available() and "press=1" in str(DotWeb.eval("location.search")):
+	if DotWeb.available() and DotWeb.query_param("press") == "1":
 		_press.call_deferred()
 
 
@@ -49,4 +49,4 @@ func _publish(note: String) -> void:
 	var body := JSON.stringify({"recent": recent.size(), "saved": _prof.last_saved_path(),
 		"failures": DotWeb.sync_failures(), "note": note, "done": note != "" or true})
 	print("web_record: ", body)
-	var _r: Variant = DotWeb.eval("window.__prof=%s" % body)
+	DotWeb.publish("prof", body)
