@@ -1,15 +1,9 @@
 class_name DotProfilerPeriod
 extends RefCounted
 
-## Finds the fixed interval spikes repeat on, so "lag every second" points at a timer rather than at load.
-##
-## [codeblock]
-## var p := DotProfilerPeriod.new()
-## for t in spike_times: p.add(t)
-## var found := p.detect()   # {period_s, beats, spikes, phase_s} or {} when there is no beat
-## [/codeblock]
-##
-## Spikes may skip beats (a timer whose work is only sometimes slow), so a gap of two or three periods still counts.
+## Finds the fixed interval spikes repeat on, so "lag every second" points at a timer, not load.
+## [method add] spike times, then [method detect] returns {period_s, beats, spikes, phase_s} or {}.
+## Spikes may skip beats, so a gap of two or three periods still counts.
 
 ## Spike times kept, newest last.
 var keep := 64

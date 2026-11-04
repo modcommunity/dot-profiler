@@ -1,12 +1,9 @@
 class_name DotProfilerReport
 extends RefCounted
 
-## A recording turned into a report, written as JSON and readable text side by side, and the list of those already written.
-##
-## [codeblock]
-## var report := DotProfilerReport.build(frames_ms, spikes, systems, phases, {"budget_ms": 33.0})
-## var res := DotProfilerReport.write(report, "user://profiles", 20)   # value: the JSON path
-## [/codeblock]
+## A recording turned into a report, written as JSON and readable text side by side.
+## [method build] makes it from frame times, spikes, systems and phases; [method write] saves it
+## under a directory, keeping the newest N, and returns the JSON path.
 
 const CHANNEL := "dot.profiler"
 const VERSION := 1

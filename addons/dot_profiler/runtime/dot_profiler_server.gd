@@ -1,10 +1,9 @@
 class_name DotProfilerServer
 extends Node
 
-## A dedicated server's profiler controls: sv_profiler_* console and RCON commands, profiler_* cvars, and the query's game keys.
-##
-## dot-server and dot-server-query are reached by duck typing through [DotRegistry], so neither is a dependency.
-## [method install] parents it under the profiler, so it lives and goes with it.
+## A dedicated server's profiler controls: sv_profiler_* commands, profiler_* cvars, query keys.
+## dot-server and dot-server-query are reached by duck typing through [DotRegistry]; [method install]
+## parents it under the profiler.
 
 const CHANNEL := "dot.profiler.server"
 const PERMISSION := "config"

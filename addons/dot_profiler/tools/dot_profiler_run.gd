@@ -1,14 +1,8 @@
 extends Node
 
-## Headless runner: loads a scene, lets it warm up, records it with a DotProfiler and prints the result as a
-## `PERF {json}` line (the perf budget's format) and a `PROFILER {json}` line naming the spike causes and beats.
-##
-## [codeblock]
-## godot --headless --path . res://addons/dot_profiler/tools/dot_profiler_run.tscn -- \
-##     --profile-scene res://tools/client_bench.tscn --profile-warmup 10 --profile-seconds 20 --profile-budget 16.7 \
-##     <the scene's own arguments>
-## [/codeblock]
-## The scene's own arguments pass through untouched. Exit 0 once the report is written, 1 when it is not, 2 on bad arguments.
+## Headless runner: loads a scene, warms up, records it and prints a `PERF {json}` line and a
+## `PROFILER {json}` line naming spike causes. Flags: --profile-scene, -warmup, -seconds, -budget;
+## the rest pass through. Exit 0 once the report is written, 1 when it is not, 2 on bad arguments.
 
 const CHANNEL := "dot.profiler"
 

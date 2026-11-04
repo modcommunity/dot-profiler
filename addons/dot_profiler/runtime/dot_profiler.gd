@@ -2,17 +2,9 @@
 class_name DotProfiler
 extends Node
 
-## Watches every frame, names the system behind each one over budget, spots spikes on a fixed beat, and records reports.
-##
-## [codeblock]
-## var prof := DotProfiler.new()
-## add_child(prof)                       # registered as "dot_profiler"; off until profiler_enabled 1
-## prof.bind_console(console_local)      # profiler_* vars, profiler_record [s], profiler_stop, profiler_report
-## var res := prof.start_recording(30)   # later: res of stop_recording() is the JSON path
-## [/codeblock]
-##
-## Systems report their cost through dot-core's [DotFrameCost]; a frame with none is blamed on the engine phase
-## (physics, script, render, wait) that took longest, with the counter deltas [DotHitchLog] saw as evidence.
+## Watches every frame, names the system behind each over budget, spots spikes on a fixed beat and
+## records reports. Off until profiler_enabled 1; [method bind_console] adds the profiler_* vars.
+## Systems report through [DotFrameCost]; a frame with none is blamed on the slowest engine phase.
 
 const CHANNEL := "dot.profiler"
 const SERVICE := &"dot_profiler"
