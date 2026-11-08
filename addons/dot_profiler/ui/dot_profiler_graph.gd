@@ -46,12 +46,10 @@ func _draw() -> void:
 	draw_rect(Rect2(x0, 0, data.capacity * COL_W, h), Color(0.05, 0.06, 0.08, 0.9))
 	for age in data.count():
 		var x := x0 + (data.capacity - 1 - age) * COL_W
-		var y := h
+		var heights := PackedFloat32Array()
 		for b in DotProfilerGraphData.BANDS.size():
-			var bh := minf(data.value(b, age) * k, y)
-			if bh > 0.0:
-				draw_rect(Rect2(x, y - bh, COL_W, bh), DotProfilerGraphData.COLORS[b])
-				y -= bh
+			heights.append(data.value(b, age) * k)
+		var _drawn := DotStackedColumn.draw(self, x, h, COL_W, heights, DotProfilerGraphData.COLORS, h)
 	var by := h - budget_ms * k
 	if by > 0.0:
 		draw_line(Vector2(x0, by), Vector2(x0 + data.capacity * COL_W, by), Color(1, 1, 1, 0.6))
