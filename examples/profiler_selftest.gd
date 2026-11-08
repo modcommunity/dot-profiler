@@ -3,8 +3,8 @@ extends Node
 ## dot-profiler's suite: period detection, attribution, config, a live run with a system that spikes on a beat,
 ## the console commands, the menu panel's Record then Stop writing a file, and sv_profiler_* on a real dot-server console. Exits non-zero on any failure.
 
-const SECTIONS := 7
-const CHECKS := 63
+const SECTIONS := 8
+const CHECKS := 73
 const DIR := "user://profiler_selftest"
 
 var _checks := 0
@@ -65,6 +65,7 @@ func _ready() -> void:
 	_period()
 	_attribution()
 	_config()
+	_graph()
 	await _live()
 	await _panel()
 	await _server()
@@ -130,6 +131,36 @@ func _attribution() -> void:
 	_check(DotProfiler.attribute(rec).cause == "engine.render", "with no system reports the render phase is blamed")
 	var line := DotProfilerReport.spike_line(a)
 	_check(line.contains("navigation (rebuild)") and line.contains("t=2.00s"), "a spike reads as one line: %s" % line)
+	_sections += 1
+
+
+func _graph() -> void:
+	var d := DotProfilerGraphData.new(30)
+	for i in 40:
+		d.push_record({"ms": 20.0, "physics": 2.0, "script": 6.0, "render": 4.0, "wait": 3.0})
+	_check(d.count() == 30, "the ring keeps only its capacity of frames")
+	var t := d.tops()
+	_check(is_equal_approx(t[0], 2.0) and is_equal_approx(t[1], 8.0), "each band stacks on the one below: %s" % [t])
+	_check(is_equal_approx(t[4], 20.0), "the stack top is the frame time, the rest is 'other'")
+	_check(is_equal_approx(d.value(4, 0), 5.0), "other is what the phases leave of the frame")
+	var sp := DotProfilerGraphData.spread(PackedFloat32Array([0, 1, 2, 3, 4]), 10.0, 100.0)
+	_check(sp[1] - sp[0] >= 10.0 and sp[4] - sp[3] >= 10.0 and sp[4] <= 100.0, "legend labels never overlap: %s" % [sp])
+	var sp2 := DotProfilerGraphData.spread(PackedFloat32Array([0, 95, 98, 99, 99]), 10.0, 100.0)
+	_check(sp2[4] <= 100.0 and sp2[4] - sp2[3] >= 10.0 and sp2[1] >= 10.0, "labels crowded at the top move down inside the graph: %s" % [sp2])
+	var c := DotProfilerConfig.new()
+	_check(c.graph and c.graph_legend and c.graph_height == 80, "the graph and its legend are on by default")
+	_check(not c.set_text("graph_height", "5").ok and c.graph_height == 80, "a graph too short is refused")
+	_check(c.set_text("graph_legend", "0").ok and not c.graph_legend, "the legend can be turned off")
+	var g := DotProfilerGraph.new()
+	g.data = d
+	g.height_px = 100.0
+	g.show_legend = false
+	g.fit()
+	var w_off := g.size.x
+	g.show_legend = true
+	g.fit()
+	_check(g.size.x > w_off and g.size.y == 100.0, "the legend adds width, not height")
+	g.free()
 	_sections += 1
 
 

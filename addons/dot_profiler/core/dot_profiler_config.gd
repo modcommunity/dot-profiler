@@ -17,6 +17,21 @@ extends DotConfig
 ## Rows the overlay lists.
 @export var overlay_top: int = 6
 
+## Draw a solid stacked area graph of frame cost under the overlay text.
+@export var graph: bool = true
+
+## Height of the graph in pixels.
+@export var graph_height: int = 80
+
+## Milliseconds the graph's full height stands for; 0 uses twice the budget.
+@export var graph_scale_ms: float = 0.0
+
+## Frames (2 px columns each) the graph shows.
+@export var graph_frames: int = 120
+
+## Y legend: each band's name and the ms where it starts, in small text.
+@export var graph_legend: bool = true
+
 ## How far, as a fraction of the period, a spike may land from the beat and still count as on it.
 @export var period_tolerance: float = 0.12
 
@@ -57,6 +72,8 @@ func validate() -> DotResult:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_budget_ms is %s; it must be above 0 and at most 10000." % budget_ms)
 	if overlay_top < 1 or overlay_top > 32:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_overlay_top must be 1 to 32.")
+	if graph_height < 20 or graph_height > 400 or graph_frames < 20 or graph_frames > 600 or graph_scale_ms < 0.0 or graph_scale_ms > 10000.0:
+		return DotResult.fail(DotError.CODE_INVALID, "profiler_graph_height is 20 to 400, profiler_graph_frames 20 to 600, profiler_graph_scale_ms 0 to 10000.")
 	if period_tolerance <= 0.0 or period_tolerance >= 0.5:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_period_tolerance must be above 0 and below 0.5.")
 	if period_min_spikes < 3:

@@ -30,6 +30,7 @@ var sampler: Callable = DotProfilerMetrics.memory
 
 var _hitch: DotHitchLog = null
 var _overlay: CanvasLayer = null
+var _graph_data := DotProfilerGraphData.new()
 var _periods := {}
 var _all_period := DotProfilerPeriod.new()
 var _last_warn := {}
@@ -306,7 +307,16 @@ func _apply() -> void:
 		_periods[c].min_spikes = config.period_min_spikes
 	_all_period.tolerance = config.period_tolerance
 	_all_period.min_spikes = config.period_min_spikes
+	if _graph_data.capacity != config.graph_frames:
+		_graph_data.resize(config.graph_frames)
 	_show_overlay(config.overlay)
+	if _overlay != null:
+		_overlay.call(&"apply_graph")
+
+
+## The per-frame stacked costs the overlay graph draws.
+func graph_data() -> DotProfilerGraphData:
+	return _graph_data
 
 
 func _stop_watch() -> void:
@@ -328,6 +338,8 @@ func _show_overlay(on: bool) -> void:
 
 func _on_frame(rec: Dictionary) -> void:
 	var ms: float = rec.get("ms", 0.0)
+	if config.overlay and config.graph:
+		_graph_data.push_record(rec)
 	var k := 0.1
 	_avg_ms = lerpf(_avg_ms, ms, k)
 	for p: String in _avg_phases:

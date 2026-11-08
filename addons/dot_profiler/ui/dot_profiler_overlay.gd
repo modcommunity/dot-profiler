@@ -9,6 +9,7 @@ const REFRESH_S := 0.25
 var profiler: DotProfiler = null
 
 var _label: Label = null
+var _graph: DotProfilerGraph = null
 
 
 func _ready() -> void:
@@ -25,7 +26,13 @@ func _ready() -> void:
 	_label = Label.new()
 	_label.add_theme_font_size_override(&"font_size", 14)
 	_label.add_theme_color_override(&"font_color", Color(0.9, 0.95, 1.0))
-	bg.add_child(_label)
+	var box := VBoxContainer.new()
+	bg.add_child(box)
+	box.add_child(_label)
+	_graph = DotProfilerGraph.new()
+	_graph.data = profiler.graph_data()
+	box.add_child(_graph)
+	apply_graph()
 	# A timer, not _process: the text is rebuilt 4 times a second, never per frame.
 	var timer := Timer.new()
 	timer.wait_time = REFRESH_S
@@ -37,10 +44,25 @@ func _ready() -> void:
 
 
 
-## Redraws the text now.
+## Applies the graph settings (shown, height, scale, legend, frames).
+func apply_graph() -> void:
+	if _graph == null or not is_instance_valid(profiler):
+		return
+	var c := profiler.config
+	_graph.visible = c.graph
+	_graph.height_px = c.graph_height
+	_graph.scale_ms = c.graph_scale_ms
+	_graph.budget_ms = c.budget_ms
+	_graph.show_legend = c.graph_legend
+	_graph.fit()
+
+
+## Redraws the text and graph now.
 func refresh() -> void:
 	if _label == null or not is_instance_valid(profiler):
 		return
+	if _graph != null and _graph.visible:
+		_graph.queue_redraw()
 	_label.text = "\n".join(lines(profiler))
 
 

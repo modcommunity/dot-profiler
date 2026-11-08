@@ -21,7 +21,7 @@ Names the system behind a frame spike, its period when it repeats, an overlay of
 | `addons/dot_profiler/runtime/dot_profiler.gd` | the node: owns a `DotHitchLog`, attributes spikes, records, registers `&"dot_profiler"` |
 | `addons/dot_profiler/runtime/dot_profiler_server.gd` | `sv_profiler_*` on dot-server's console and RCON, server samples, the query provider |
 | `addons/dot_profiler/core/dot_profiler_metrics.gd` | engine monitors (frame, memory) and network bytes (a `DotMeteredPeer`, or ENet host statistics) |
-| `addons/dot_profiler/ui/` | `dot_profiler_overlay.gd`, `dot_profiler_panel.gd` |
+| `addons/dot_profiler/ui/` | `dot_profiler_overlay.gd`, `dot_profiler_panel.gd`, `dot_profiler_graph.gd` (solid stacked area chart by band, Y legend of band start ms; cvars profiler_graph, _graph_height, _graph_scale_ms, _graph_frames, _graph_legend; data ring in core/dot_profiler_graph_data.gd) |
 | `addons/dot_profiler/tools/dot_profiler_run.*` | the headless runner |
 | `examples/` | `profiler_selftest` (the suite), `profiler_demo` (what the screenshot renders), `spiky` (the runner's CI target) |
 | `tools/screenshot.sh`, `tools/menu_tab_shot.gd` | render the demo, or (`menu`) dot-menu's Advanced page with a profiler placed, under Xvfb |
