@@ -148,8 +148,8 @@ func _graph() -> void:
 	var sp2 := DotProfilerGraphData.spread(PackedFloat32Array([0, 95, 98, 99, 99]), 10.0, 100.0)
 	_check(sp2[4] <= 100.0 and sp2[4] - sp2[3] >= 10.0 and sp2[1] >= 10.0, "labels crowded at the top move down inside the graph: %s" % [sp2])
 	var c := DotProfilerConfig.new()
-	_check(c.graph and c.graph_legend and c.graph_height == 80, "the graph and its legend are on by default")
-	_check(not c.set_text("graph_height", "5").ok and c.graph_height == 80, "a graph too short is refused")
+	_check(c.graph and c.graph_legend and c.graph_height == 60, "the graph and its legend are on by default")
+	_check(not c.set_text("graph_height", "5").ok and c.graph_height == 60, "a graph too short is refused")
 	_check(c.set_text("graph_legend", "0").ok and not c.graph_legend, "the legend can be turned off")
 	var g := DotProfilerGraph.new()
 	g.data = d

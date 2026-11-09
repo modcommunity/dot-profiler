@@ -15,13 +15,13 @@ extends DotConfig
 @export var overlay: bool = false
 
 ## Rows the overlay lists.
-@export var overlay_top: int = 6
+@export var overlay_top: int = 4
 
 ## Draw a solid stacked area graph of frame cost under the overlay text.
 @export var graph: bool = true
 
 ## Height of the graph in pixels.
-@export var graph_height: int = 80
+@export var graph_height: int = 60
 
 ## Milliseconds the graph's full height stands for; 0 uses twice the budget.
 @export var graph_scale_ms: float = 0.0
@@ -31,6 +31,45 @@ extends DotConfig
 
 ## Y legend: each band's name and the ms where it starts, in small text.
 @export var graph_legend: bool = true
+
+## Client look of the overlay (the UI_KEYS below; the menu saves them per device): the text lines above the graph.
+@export var overlay_text: bool = true
+
+## Font size of the overlay's text and of the graph's legend, in pixels.
+@export var overlay_text_size: int = 11
+
+## Scale of the whole overlay (text and graph together), 0.5 to 3.
+@export var overlay_scale: float = 1.0
+
+## Which corner the overlay sits in: one of [constant CORNERS].
+@export var overlay_corner: String = "top_left"
+
+## Distance from that corner's two edges, in pixels.
+@export var overlay_offset_x: int = 12
+@export var overlay_offset_y: int = 12
+
+## Opacity of everything the overlay draws, 0.1 to 1.
+@export var overlay_opacity: float = 0.85
+
+## Opacity of the plate behind the text and graph, 0 to 1.
+@export var overlay_bg_opacity: float = 0.5
+
+## Width of one frame's column in the graph, in pixels (1 to 6); the graph is graph_frames of these wide.
+@export var graph_col_px: int = 2
+
+## Draw the connection (ping, bytes in and out) in the profiler's graph and hide dot-menu's separate net_stat panel while the overlay is up.
+@export var overlay_merge_net: bool = true
+
+## Report sections (docs/report-format.md); off leaves the section out of the report. Collection that costs time
+## has its own switch above (trace, monitors, timeline, render_detail, census, deep, sample_hz, worst_frames, script_top).
+@export var rec_frame_stats: bool = true
+@export var rec_spikes: bool = true
+@export var rec_systems: bool = true
+@export var rec_phases: bool = true
+@export var rec_physics_ticks: bool = true
+@export var rec_queries: bool = true
+@export var rec_growth: bool = true
+@export var rec_overhead: bool = true
 
 ## How far, as a fraction of the period, a spike may land from the beat and still count as on it.
 @export var period_tolerance: float = 0.12
@@ -90,6 +129,12 @@ extends DotConfig
 ## Buckets for the script functions: comma-separated `name=substring|substring` matched against script paths.
 @export var script_buckets: String = ""
 
+## The settings the overlay's look is made of; the menu saves exactly these (see [method DotProfiler.save_ui_prefs]).
+const UI_KEYS: PackedStringArray = ["overlay_top", "overlay_text", "overlay_text_size", "overlay_scale",
+	"overlay_corner", "overlay_offset_x", "overlay_offset_y", "overlay_opacity", "overlay_bg_opacity", "graph",
+	"graph_height", "graph_frames", "graph_col_px", "graph_legend", "overlay_merge_net"]
+const CORNERS: PackedStringArray = ["top_left", "top_right", "bottom_left", "bottom_right"]
+
 var _cvars: Dictionary = {}
 
 
@@ -108,6 +153,16 @@ func validate() -> DotResult:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_overlay_top must be 1 to 32.")
 	if graph_height < 20 or graph_height > 400 or graph_frames < 20 or graph_frames > 600 or graph_scale_ms < 0.0 or graph_scale_ms > 10000.0:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_graph_height is 20 to 400, profiler_graph_frames 20 to 600, profiler_graph_scale_ms 0 to 10000.")
+	if overlay_text_size < 7 or overlay_text_size > 40 or overlay_scale < 0.5 or overlay_scale > 3.0:
+		return DotResult.fail(DotError.CODE_INVALID, "profiler_overlay_text_size is 7 to 40 and profiler_overlay_scale 0.5 to 3.")
+	if not overlay_corner in CORNERS:
+		return DotResult.fail(DotError.CODE_INVALID, "profiler_overlay_corner is one of %s." % ", ".join(CORNERS))
+	if overlay_offset_x < 0 or overlay_offset_x > 4000 or overlay_offset_y < 0 or overlay_offset_y > 4000:
+		return DotResult.fail(DotError.CODE_INVALID, "profiler_overlay_offset_x and _y are 0 to 4000.")
+	if overlay_opacity < 0.1 or overlay_opacity > 1.0 or overlay_bg_opacity < 0.0 or overlay_bg_opacity > 1.0:
+		return DotResult.fail(DotError.CODE_INVALID, "profiler_overlay_opacity is 0.1 to 1 and profiler_overlay_bg_opacity 0 to 1.")
+	if graph_col_px < 1 or graph_col_px > 6:
+		return DotResult.fail(DotError.CODE_INVALID, "profiler_graph_col_px is 1 to 6.")
 	if period_tolerance <= 0.0 or period_tolerance >= 0.5:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_period_tolerance must be above 0 and below 0.5.")
 	if period_min_spikes < 3:

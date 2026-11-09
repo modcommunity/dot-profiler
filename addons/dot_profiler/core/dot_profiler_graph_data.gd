@@ -12,6 +12,9 @@ var capacity := 120
 var _data := PackedFloat32Array()
 var _head := 0
 var _count := 0
+## Network KB/s per frame (in, out), filled only while the graph is merged with the net readout.
+var _net := PackedFloat32Array()
+var _net_on := false
 
 
 func _init(frames: int = 120) -> void:
@@ -23,6 +26,9 @@ func resize(frames: int) -> void:
 	capacity = maxi(frames, 2)
 	_data.resize(capacity * BANDS.size())
 	_data.fill(0.0)
+	_net.resize(capacity * 2)
+	_net.fill(0.0)
+	_net_on = false
 	_head = 0
 	_count = 0
 
@@ -42,6 +48,36 @@ func push_record(rec: Dictionary) -> void:
 	_data[o + 4] = maxf(float(rec.get("ms", 0.0)) - sum, 0.0)
 	_head = (_head + 1) % capacity
 	_count = mini(_count + 1, capacity)
+
+
+## Records the network rate of the frame just pushed with [method push_record], in KB/s.
+func push_net(kb_in: float, kb_out: float) -> void:
+	if _count == 0:
+		return
+	var o := ((_head - 1 + capacity) % capacity) * 2
+	_net[o] = kb_in
+	_net[o + 1] = kb_out
+	_net_on = true
+
+
+## True once [method push_net] has been called since the last resize.
+func has_net() -> bool:
+	return _net_on
+
+
+## Network KB/s [param dir] (0 in, 1 out) in the frame [param age] frames back.
+func net_value(dir: int, age: int) -> float:
+	if age < 0 or age >= _count:
+		return 0.0
+	return _net[((_head - 1 - age + capacity * 2) % capacity) * 2 + dir]
+
+
+## Largest network rate (either direction) over the held frames.
+func net_peak() -> float:
+	var m := 0.0
+	for a in _count:
+		m = maxf(m, maxf(net_value(0, a), net_value(1, a)))
+	return m
 
 
 ## Band [param band]'s value in the frame [param age] frames back (0 is the newest).

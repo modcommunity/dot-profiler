@@ -33,6 +33,7 @@ var sampler: Callable = DotProfilerMetrics.memory
 var _hitch: DotHitchLog = null
 var _overlay: CanvasLayer = null
 var _graph_data := DotProfilerGraphData.new()
+var _net := DotProfilerNet.new()
 var _periods := {}
 var _all_period := DotProfilerPeriod.new()
 var _last_warn := {}
@@ -72,6 +73,7 @@ func _ready() -> void:
 		if not res.ok:
 			DotLog.warn(CHANNEL, "profiler settings: %s; using defaults" % res.error.message)
 			config = DotProfilerConfig.new()
+	var _loaded := load_ui_prefs()
 	config.changed.connect(_apply)
 	if register_as_service:
 		DotRegistry.register(SERVICE, self)
@@ -197,6 +199,7 @@ func build_report() -> Dictionary:
 		meta["census"] = _census
 	var report := DotProfilerReport.build(_rec_frames, _rec_spikes, _rec_systems, _rec_phases, meta)
 	DotProfilerSession.attach_group_systems(report)
+	DotProfilerCatalog.strip(report, config)
 	return report
 
 
@@ -389,6 +392,34 @@ func bind_console(local: Object) -> void:
 		func(a: PackedStringArray) -> Variant: return compare_recordings(a[0] if a.size() > 1 else "", a[1] if a.size() > 1 else ""))
 
 
+## Where the look settings are kept between runs (user://); "" disables saving.
+var ui_prefs_file: String = "user://profiler_ui.cfg"
+
+
+## Writes the look settings (profiler overlay position, sizes, opacity, merge) so the next run starts the same.
+func save_ui_prefs() -> Error:
+	if ui_prefs_file == "":
+		return OK
+	var made := DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(ui_prefs_file.get_base_dir()))
+	if made != OK:
+		return made
+	var cf := ConfigFile.new()
+	for key in DotProfilerConfig.UI_KEYS:
+		cf.set_value("ui", key, config.text_of(key))
+	return cf.save(ui_prefs_file)
+
+
+## Reads what [method save_ui_prefs] wrote; unknown or invalid values are skipped. True when a file was read.
+func load_ui_prefs() -> bool:
+	var cf := ConfigFile.new()
+	if ui_prefs_file == "" or cf.load(ui_prefs_file) != OK:
+		return false
+	for key in DotProfilerConfig.UI_KEYS:
+		if cf.has_section_key("ui", key):
+			var _r := config.set_text(key, str(cf.get_value("ui", key)))
+	return true
+
+
 ## The panel the settings menu shows: overlay toggle, record and stop, the saved path and recent recordings.
 ## [param kit] is dot-menu's DotMenuKit, used by duck typing; null builds plain controls.
 func make_menu_panel(kit: Object = null) -> Control:
@@ -519,6 +550,9 @@ func _on_frame(rec: Dictionary) -> void:
 	var ms: float = rec.get("ms", 0.0)
 	if config.overlay and config.graph:
 		_graph_data.push_record(rec)
+		if config.overlay_merge_net:
+			var kb := _net.sample(get_tree(), ms)
+			_graph_data.push_net(kb[0], kb[1])
 	var k := 0.1
 	_avg_ms = lerpf(_avg_ms, ms, k)
 	for p: String in _avg_phases:
