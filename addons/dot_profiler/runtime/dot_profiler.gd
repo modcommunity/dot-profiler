@@ -10,6 +10,8 @@ const CHANNEL := "dot.profiler"
 const SERVICE := &"dot_profiler"
 ## A system must be at least this share of a spike to be its cause; below it the engine phase is.
 const CAUSE_SHARE := 0.25
+## The input action that starts a capture of profiler_capture_seconds, or stops and writes it.
+const CAPTURE_ACTION := &"profiler_capture"
 
 ## A frame over budget, attributed: {t, ms, cause, what, hints, period, physics, script, render, wait, systems}.
 signal spike(info: Dictionary)
@@ -53,6 +55,9 @@ var _rec_samples: Array = []
 var _next_sample_usec := 0
 var _last_saved := ""
 var _stop_pending := false
+var _session: DotProfilerSession = null
+var _ticks: DotProfilerTicks = null
+var _deep := {}
 
 
 func _ready() -> void:
@@ -65,6 +70,7 @@ func _ready() -> void:
 	config.changed.connect(_apply)
 	if register_as_service:
 		DotRegistry.register(SERVICE, self)
+	set_process_input(InputMap.has_action(CAPTURE_ACTION))
 	_apply()
 
 
@@ -112,6 +118,14 @@ func start_recording(seconds: float = 0.0) -> DotResult:
 	_rec_phases = {"physics": 0.0, "script": 0.0, "render": 0.0, "wait": 0.0}
 	_rec_samples = []
 	_next_sample_usec = 0
+	_session = DotProfilerSession.new()
+	_session.monitors = config.monitors
+	_session.worst_keep = config.worst_frames
+	if _ticks == null:
+		_ticks = DotProfilerTicks.new()
+		add_child(_ticks)
+	var _t := _ticks.take()
+	_deep = _start_deep(_rec_seconds)
 	_apply()
 	DotLog.info(CHANNEL, "recording %.0f s of frames (budget %.1f ms)" % [_rec_seconds, config.budget_ms])
 	recording_started.emit(_rec_seconds)
@@ -124,7 +138,11 @@ func stop_recording() -> DotResult:
 		return DotResult.fail(DotError.CODE_STATE, "No recording is running.")
 	_recording = false
 	var report := build_report()
-	var res := DotProfilerReport.write(report, config.record_dir, config.keep_recordings)
+	var res := DotProfilerReport.write(report, config.record_dir, config.keep_recordings,
+		_session.folded() if _session != null else "")
+	if _ticks != null:
+		_ticks.queue_free()
+		_ticks = null
 	_apply()
 	if res.ok:
 		_last_saved = res.value
@@ -139,11 +157,70 @@ func stop_recording() -> DotResult:
 ## The report of the recording so far (or the last one), without writing it.
 func build_report() -> Dictionary:
 	var scene := get_tree().current_scene
-	return DotProfilerReport.build(_rec_frames, _rec_spikes, _rec_systems, _rec_phases, {
+	var meta := {
 		"budget_ms": config.budget_ms, "seconds": _rec_seconds,
 		"scene": scene.scene_file_path if scene != null else "",
 		"period": DotProfilerPeriod.describe_found(_all_period.detect()),
-		"sample_hz": config.sample_hz, "samples": _rec_samples})
+		"sample_hz": config.sample_hz, "samples": _rec_samples, "deep": _deep}
+	if _session != null:
+		meta.merge(_session.to_report())
+	return DotProfilerReport.build(_rec_frames, _rec_spikes, _rec_systems, _rec_phases, meta)
+
+
+## Starts a capture of profiler_capture_seconds, or stops the running recording and writes it: the one-key profile.
+func toggle_capture() -> DotResult:
+	return stop_recording() if _recording else start_recording(config.capture_seconds)
+
+
+## Binds [param keycode] to [constant CAPTURE_ACTION] when the project has no binding, and listens for it.
+func enable_capture_key(keycode: Key = KEY_F10) -> void:
+	if not InputMap.has_action(CAPTURE_ACTION):
+		InputMap.add_action(CAPTURE_ACTION)
+	if InputMap.action_get_events(CAPTURE_ACTION).is_empty():
+		var ev := InputEventKey.new()
+		ev.keycode = keycode
+		InputMap.action_add_event(CAPTURE_ACTION, ev)
+	set_process_input(true)
+
+
+func _input(event: InputEvent) -> void:
+	if event.is_action_pressed(CAPTURE_ACTION, false, true):
+		var res := toggle_capture()
+		if not res.ok:
+			DotLog.warn(CHANNEL, "capture: %s" % res.error.message)
+
+
+## Compares two recordings (JSON paths); with none, the two newest. The value is the text lines.
+func compare_recordings(path_a: String = "", path_b: String = "") -> DotResult:
+	if path_a == "" or path_b == "":
+		var recent := recent_recordings(2)
+		if recent.size() < 2:
+			return DotResult.fail(DotError.CODE_STATE, "Two recordings are needed to compare; %d found in %s." % [recent.size(), config.record_dir])
+		path_a = recent[1].path
+		path_b = recent[0].path
+	var a := DotProfilerCompare.load_report(path_a)
+	if not a.ok:
+		return a
+	var b := DotProfilerCompare.load_report(path_b)
+	if not b.ok:
+		return b
+	return DotResult.success(DotProfilerCompare.to_text(DotProfilerCompare.compare(a.value, b.value),
+		path_a.get_file(), path_b.get_file()))
+
+
+func _start_deep(seconds: float) -> Dictionary:
+	if not config.deep:
+		return {}
+	var dir := ProjectSettings.globalize_path(config.record_dir)
+	var made := DotPaths.ensure_dir(config.record_dir)
+	var file := dir.path_join("perf-%d.data" % Time.get_unix_time_from_system())
+	var res := DotProfilerDeep.start(seconds, file) if made.ok else made
+	if not res.ok:
+		DotLog.warn(CHANNEL, "deep mode off: %s" % res.error.message)
+		return {"ok": false, "reason": res.error.message}
+	var info: Dictionary = res.value
+	info["ok"] = true
+	return info
 
 
 ## Recordings already written, newest first, at most [param n].
@@ -211,6 +288,10 @@ func bind_console(local: Object) -> void:
 		func(_a: PackedStringArray) -> Variant: return stop_recording())
 	local.call(&"add_command", &"profiler_report", "The top costs and the spike beat now.",
 		func(_a: PackedStringArray) -> Variant: return describe_lines())
+	local.call(&"add_command", &"profiler_capture", "Start a capture of profiler_capture_seconds, or stop and write it.",
+		func(_a: PackedStringArray) -> Variant: return toggle_capture())
+	local.call(&"add_command", &"profiler_compare", "Compare two recordings (JSON paths; default the two newest), ms per frame.",
+		func(a: PackedStringArray) -> Variant: return compare_recordings(a[0] if a.size() > 1 else "", a[1] if a.size() > 1 else ""))
 
 
 ## The panel the settings menu shows: overlay toggle, record and stop, the saved path and recent recordings.
@@ -302,6 +383,7 @@ func _apply() -> void:
 	if _hitch != null:
 		_hitch.threshold_ms = config.budget_ms
 	DotFrameCost.enabled = want
+	DotFrameCost.trace = want and _recording and config.trace
 	for c: Variant in _periods:
 		_periods[c].tolerance = config.period_tolerance
 		_periods[c].min_spikes = config.period_min_spikes
@@ -324,6 +406,7 @@ func _stop_watch() -> void:
 		_hitch.stop()
 		_hitch = null
 	DotFrameCost.enabled = false
+	DotFrameCost.trace = false
 
 
 func _show_overlay(on: bool) -> void:
@@ -337,6 +420,7 @@ func _show_overlay(on: bool) -> void:
 
 
 func _on_frame(rec: Dictionary) -> void:
+	var t0 := Time.get_ticks_usec()
 	var ms: float = rec.get("ms", 0.0)
 	if config.overlay and config.graph:
 		_graph_data.push_record(rec)
@@ -374,6 +458,9 @@ func _on_frame(rec: Dictionary) -> void:
 			_rec_samples.append(row)
 	if ms >= config.budget_ms:
 		_on_spike(rec)
+	if _recording and _session != null:
+		_session.add(rec, _ticks.take() if _ticks != null else PackedInt64Array())
+		_session.add_overhead(Time.get_ticks_usec() - t0)
 	if _recording and not _stop_pending and elapsed_s() >= _rec_seconds:
 		# Deferred: stopping disconnects the hitch log that is emitting this.
 		_stop_pending = true
