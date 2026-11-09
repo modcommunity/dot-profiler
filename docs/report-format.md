@@ -29,6 +29,19 @@ A recording writes three files next to each other in `profiler_record_dir`: `pro
 | `overhead` | `{on_frame_avg_ms, on_frame_max_ms, spans_per_frame, trace}`: the profiler's own per-frame cost while recording, measured around its frame handler. |
 | `deep` | Empty unless `profiler_deep` is on: `{ok, file, pid, command}` or `{ok: false, reason}` ([deep-mode.md](deep-mode.md)). |
 
+## Detail keys
+
+These come from the options in [design.md](design.md#configuration); all are off by default except `growth`, which is computed when the report is built from the frames already kept.
+
+| Key | Meaning |
+| --- | --- |
+| `growth` | Per monitor that grows (`objects`, `nodes`, `orphan_nodes`, `static_mb`, `video_mb`, `resources`, `texture_mb`, `buffer_mb`): `{first, last, delta, per_min, max}`. Empty when monitors are off. |
+| `monitors` (render_detail) | Adds `texture_mb`, `buffer_mb`, `resources`, `draws_visible`, `draws_shadow`, `draws_canvas`, `primitives_visible`, `primitives_shadow`, `objects_visible`, `objects_shadow`, `render_cpu_ms` and `render_gpu_ms`, even with `profiler_monitors` off. |
+| `timeline` | `{t0, frame_ms, seconds, flagged}`. `frame_ms` is every frame's time; `seconds` rows `{s, frames, avg_ms, max_ms, flagged, physics, script, render, wait}` (phases in ms per frame); `flagged` (at most 200, the worst kept) `{t, ms, avg_ms, top, systems, physics, script, render, wait}`, with `top` the 5 largest self spans `{path, self_ms, ms}` and `systems` the 5 costliest `{system, ms}`. |
+| `groups` | Per `profiler_groups` entry `{group, prefix, count, systems}`: `count` is `{min, avg, p50, p95, p99, max}` per frame, `systems` rows `{system, ms_per_frame, calls_per_frame, us_per_unit}` for systems starting with `prefix`. |
+| `script_functions` | `{ok, functions, scripts, buckets, self_ms, function_count}` or `{ok: false, reason}`. `functions` (the top `profiler_script_top` by self time) are `{function, script, line, calls_per_frame, self_ms, total_ms, us_per_call}`, ms per frame; `scripts` sums them per file; `buckets` per `profiler_script_buckets` entry plus `other`. Times are the engine's script profiler, which inflates small functions; the profiler's own script functions are left out. |
+| `census` | `{start_nodes, end_nodes, classes}` with `classes` rows `{class, start, end, delta}`, largest change first. |
+
 ## The tree
 
 Every frame's tree hangs under fixed roots, taken from `DotHitchLog`'s stamps and a tail node that runs after every other `_physics_process`:
@@ -58,12 +71,16 @@ flamegraph.pl, inferno and speedscope read it as it is.
 
 ## Text sections
 
-After the version 1 text come, in this order: `Frames (ms):`, `Physics ticks:` (with `ticks per frame:` and per-tick ms of the scripts and the engine step), `Engine monitors (per frame):`, `Call tree (ms per frame; ...)`, `Physics queries (...)` with `by caller span (traced):`, `Worst frames (whole tree, ms incl / self):`, `Profiler overhead:` and `Deep mode:`. Sections with no data are left out.
+After the version 1 text come, in this order: `Frames (ms):`, `Physics ticks:` (with `ticks per frame:` and per-tick ms of the scripts and the engine step), `Engine monitors (per frame):`, `Growth over the recording`, `Groups (count per frame; ...)`, `Call tree (ms per frame; ...)`, `Script functions ...`, `Physics queries (...)` with `by caller span (traced):`, `Timeline (per second; ...)` with the flagged frames, `Worst frames (whole tree, ms incl / self):`, `Node census:`, `Profiler overhead:` and `Deep mode:`. Sections with no data are left out.
 
 ## Compare
 
-`DotProfilerCompare.compare(a, b)`, the `profiler_compare [a.json b.json]` console command and `tools/profile_compare.py a.json b.json` print the same thing: B minus A in ms per frame, in sections `frame` (p50, p95, p99, worst), `phase`, `system`, `tree` and `query`, each sorted by the size of the change. Version 1 reports compare on what they have.
+`DotProfilerCompare.compare(a, b)`, the `profiler_compare [a.json b.json]` console command and `tools/profile_compare.py a.json b.json` print the same thing: B minus A in ms per frame, in sections `frame` (p50, p95, p99, worst), `phase`, `system`, `tree` and `query`, each sorted by the size of the change, then `group` (count and us per unit), `script` (self ms per function and bucket) and `monitor` (averages, in their own unit) when both reports have them. Version 1 reports compare on what they have.
+
+`--diff` treats A as the saved baseline and prints only rows that moved by at least `--noise-pct` (5 by default, the run-to-run noise of a pinned box) percent of A, or that are new in B; `--min-abs` also drops changes smaller than that. In GDScript the same filter is `DotProfilerCompare.changed(rows, noise_pct, min_abs)`.
 
 ```
 python3 tools/profile_compare.py before.json after.json --min-ms 0.1 --top 20
+python3 tools/profile_compare.py baseline.json after.json --diff
+python3 tools/profile_compare_test.py
 ```
