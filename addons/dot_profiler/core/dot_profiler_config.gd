@@ -71,6 +71,25 @@ extends DotConfig
 ## Also sample native stacks with Linux perf while recording (docs/deep-mode.md).
 @export var deep: bool = false
 
+## While recording, keep every frame's time and flag frames well above the running average with the spans that ran in them.
+@export var timeline: bool = false
+
+## While recording, also read texture and buffer memory, resources, the viewport's draw split and render cpu/gpu ms.
+@export var render_detail: bool = false
+
+## Counted every frame while recording: comma-separated `group` or `group:system-prefix` (SceneTree groups, or
+## counters a game adds with [method DotProfiler.add_counter]); the report gives each prefixed system's cost per unit.
+@export var groups: String = ""
+
+## Count nodes by class when a recording starts and stops, so the report says which kinds grew.
+@export var census: bool = false
+
+## GDScript functions the report lists by self time; needs the game run with -d (docs/report-format.md). 0 is off.
+@export var script_top: int = 0
+
+## Buckets for the script functions: comma-separated `name=substring|substring` matched against script paths.
+@export var script_buckets: String = ""
+
 var _cvars: Dictionary = {}
 
 
@@ -101,7 +120,38 @@ func validate() -> DotResult:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_sample_hz must be 0 to 60.")
 	if worst_frames < 0 or worst_frames > 50 or capture_seconds <= 0.0 or capture_seconds > 3600.0:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_worst_frames must be 0 to 50 and profiler_capture_seconds above 0, at most 3600.")
+	if script_top < 0 or script_top > 500:
+		return DotResult.fail(DotError.CODE_INVALID, "profiler_script_top must be 0 to 500.")
+	for entry in parse_groups(groups):
+		if entry.group == "":
+			return DotResult.fail(DotError.CODE_INVALID, "profiler_groups is 'group' or 'group:prefix', comma-separated; '%s' has an empty name." % groups)
+	for b in parse_buckets(script_buckets):
+		if b.name == "" or (b.match as PackedStringArray).is_empty():
+			return DotResult.fail(DotError.CODE_INVALID, "profiler_script_buckets is 'name=part|part', comma-separated, not '%s'." % script_buckets)
 	return DotResult.success(self)
+
+
+## [param text] as [{group, prefix}]; a missing prefix is "".
+static func parse_groups(text: String) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for part in text.split(",", false):
+		var bits := part.strip_edges().split(":", true, 1)
+		out.append({"group": bits[0].strip_edges(), "prefix": bits[1].strip_edges() if bits.size() > 1 else ""})
+	return out
+
+
+## [param text] as [{name, match: PackedStringArray}].
+static func parse_buckets(text: String) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for part in text.split(",", false):
+		var bits := part.strip_edges().split("=", true, 1)
+		var parts := PackedStringArray()
+		if bits.size() > 1:
+			for m in bits[1].split("|", false):
+				if m.strip_edges() != "":
+					parts.append(m.strip_edges())
+		out.append({"name": bits[0].strip_edges(), "match": parts})
+	return out
 
 
 ## The cvar for [param key]: profiler_enabled, profiler_budget_ms and so on.

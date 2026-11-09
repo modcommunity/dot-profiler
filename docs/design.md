@@ -51,6 +51,12 @@ Exported defaults < JSON file (`config_file`) < environment (`DOT_PROFILER_*`) <
 | `profiler_worst_frames` | 5 | Slowest frames kept whole, with their tree (0 to 50). |
 | `profiler_capture_seconds` | 10 | Length of a capture started by the capture key or `profiler_capture`. |
 | `profiler_deep` | 0 | Also sample native stacks with perf while recording. |
+| `profiler_timeline` | 0 | While recording, keep each frame's ms and flag frames at 2x the running average (and 2 ms above it) or over budget, with their top self spans, systems and phases. |
+| `profiler_render_detail` | 0 | While recording, also read texture and buffer memory, resources, the viewport's draw calls, primitives and objects split by visible, shadow and canvas, and render cpu and gpu ms. |
+| `profiler_groups` | "" | Comma-separated `group` or `group:system-prefix`, counted every frame while recording: a SceneTree group, or a counter the game adds with `DotProfiler.add_counter(group, callable, prefix)`. With a prefix, the report gives each matching system's us per unit. |
+| `profiler_census` | 0 | Count nodes by class (or script `class_name`) when a recording starts and stops; the report lists the classes that changed most. |
+| `profiler_script_top` | 0 | GDScript functions listed by self time, with total time and calls (0 to 500). Needs the game started with `-d`, because the engine's script profiler only runs under its local debugger; without it the report says so. Costs a lot while on. |
+| `profiler_script_buckets` | "" | Sums script functions into named buckets: comma-separated `name=part|part`, matched against script paths and function names; the rest is `other`. |
 | `profiler_query` | 0 | Publish `profiler_ms`, `profiler_spikes`, `profiler_period`, `profiler_static_mb` and `profiler_nodes` in the server query's game section. Off because the query is public. |
 
 Console commands (via `bind_console(local)` on a dot-console `DotConsoleLocal`): `record [seconds]` (alias `profiler_record`), `profiler_stop`, `profiler_report`, `profiler_capture` (start a capture of `profiler_capture_seconds`, or stop the running one) and `profiler_compare [a.json b.json]` (the two newest recordings when no paths are given). `enable_capture_key(KEY_F10)` binds the `profiler_capture` input action to a key when the project has not bound it, so one key starts and stops a capture. A dedicated server uses `DotProfilerServer` instead ([server.md](server.md)).

@@ -2,7 +2,11 @@ class_name DotProfilerCompare
 extends RefCounted
 
 ## Two reports side by side: frame percentiles, engine phases, systems and (version 2) call-tree nodes in ms
-## per frame, with B minus A. tools/profile_compare.py prints the same from the JSON files.
+## per frame, with B minus A; then group cost per unit (us), script functions (ms) and monitor averages (their
+## own units) when both reports have them. tools/profile_compare.py prints the same from the JSON files.
+
+## Default noise floor of [method changed], in percent: run-to-run spread of one build on one box.
+const NOISE_PCT := 5.0
 
 
 ## Rows {section, name, a, b, delta} in ms per frame; systems and tree nodes changed most first.
@@ -25,13 +29,36 @@ static func compare(a: Dictionary, b: Dictionary, min_ms: float = 0.05) -> Array
 		for r: Dictionary in (pair[0] as Dictionary).get("queries", []):
 			(pair[1] as Dictionary)["%s %s" % [r.get("system", ""), r.get("kind", "")]] = float(r.get("ms_per_frame", 0.0))
 	out.append_array(_section("query", qa, qb, min_ms))
+	out.append_array(_section("group", _group_units(a), _group_units(b), 0.0))
+	out.append_array(_section("script", _script_self(a), _script_self(b), min_ms))
+	var ma := {}
+	var mb := {}
+	for pair: Array in [[a, ma], [b, mb]]:
+		var mon: Dictionary = (pair[0] as Dictionary).get("monitors", {})
+		for k: String in mon:
+			(pair[1] as Dictionary)[k] = float((mon[k] as Dictionary).get("avg", 0.0))
+	out.append_array(_section("monitor", ma, mb, 0.0))
+	return out
+
+
+## The rows of [method compare] that moved by at least [param noise_pct] percent of A (rows only in one report
+## always count); [param min_abs] also drops changes smaller than that in absolute terms.
+static func changed(rows: Array[Dictionary], noise_pct: float = NOISE_PCT, min_abs: float = 0.0) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for r in rows:
+		var a := absf(float(r.a))
+		var d := absf(float(r.delta))
+		if d <= min_abs or d == 0.0:
+			continue
+		if a < 0.000001 or d * 100.0 / a >= noise_pct:
+			out.append(r)
 	return out
 
 
 ## The rows as aligned text, one section after another.
 static func to_text(rows: Array[Dictionary], name_a: String = "A", name_b: String = "B") -> PackedStringArray:
 	var out := PackedStringArray()
-	out.append("profile compare  A=%s  B=%s  (ms per frame; delta is B - A)" % [name_a, name_b])
+	out.append("profile compare  A=%s  B=%s  (ms per frame unless the section says; delta is B - A)" % [name_a, name_b])
 	var section := ""
 	for r in rows:
 		if r.section != section:
@@ -51,6 +78,25 @@ static func load_report(path: String) -> DotResult:
 	if not (res.value is Dictionary):
 		return DotResult.fail(DotError.CODE_INVALID, "%s is not a profiler report." % path)
 	return DotResult.success(res.value)
+
+
+static func _group_units(r: Dictionary) -> Dictionary:
+	var out := {}
+	for g: Dictionary in r.get("groups", []):
+		out["%s count" % g.group] = float((g.get("count", {}) as Dictionary).get("avg", 0.0))
+		for s: Dictionary in g.get("systems", []):
+			out["%s us/unit %s" % [g.group, s.system]] = float(s.get("us_per_unit", 0.0))
+	return out
+
+
+static func _script_self(r: Dictionary) -> Dictionary:
+	var out := {}
+	var sf: Dictionary = r.get("script_functions", {})
+	for f: Dictionary in sf.get("functions", []):
+		out["%s %s:%d" % [f.function, String(f.script).get_file(), int(f.line)]] = float(f.get("self_ms", 0.0))
+	for b: Dictionary in sf.get("buckets", []):
+		out["bucket " + String(b.bucket)] = float(b.get("self_ms", 0.0))
+	return out
 
 
 static func _by_key(rows: Array, key: String, field: String) -> Dictionary:

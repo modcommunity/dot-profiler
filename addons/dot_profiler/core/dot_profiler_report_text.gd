@@ -2,12 +2,17 @@ class_name DotProfilerReportText
 extends RefCounted
 
 ## The text sections a version 2 report adds after the version 1 ones: frame statistics, physics ticks,
-## engine monitors, the call tree, physics queries, the worst frames whole and the profiler's own cost.
+## engine monitors, growth, groups, the call tree, script functions, physics queries, the timeline, the worst
+## frames whole, the node census and the profiler's own cost. Optional sections print only when recorded.
 
 ## Tree nodes cheaper than this per frame are left out of the text (the JSON keeps them).
 const TREE_MIN_MS := 0.05
 ## Worst-frame tree nodes cheaper than this are left out of the text.
 const FRAME_MIN_MS := 0.2
+## Flagged timeline frames the text lists, slowest first.
+const FLAGGED_LINES := 15
+## Census classes the text lists.
+const CENSUS_LINES := 12
 
 
 static func lines(r: Dictionary, top: int = 20) -> PackedStringArray:
@@ -15,9 +20,14 @@ static func lines(r: Dictionary, top: int = 20) -> PackedStringArray:
 	out.append_array(_frames(r))
 	out.append_array(_ticks(r))
 	out.append_array(_monitors(r))
+	out.append_array(_growth(r))
+	out.append_array(_groups(r))
 	out.append_array(_tree(r))
+	out.append_array(_scripts(r, top))
 	out.append_array(_queries(r, top))
+	out.append_array(_timeline(r))
 	out.append_array(_worst(r))
+	out.append_array(_census(r))
 	var o: Dictionary = r.get("overhead", {})
 	if not o.is_empty():
 		out.append("")
@@ -32,8 +42,8 @@ static func lines(r: Dictionary, top: int = 20) -> PackedStringArray:
 
 
 static func _stat_line(label: String, s: Dictionary, unit: String = "") -> String:
-	return "  %-22s min %8.2f  avg %8.2f  p95 %8.2f  p99 %8.2f  max %8.2f%s" % [label, s.get("min", 0.0),
-		s.get("avg", 0.0), s.get("p95", 0.0), s.get("p99", 0.0), s.get("max", 0.0), unit]
+	return "  %-22s min %8.2f  avg %8.2f  p50 %8.2f  p95 %8.2f  p99 %8.2f  max %8.2f%s" % [label, s.get("min", 0.0),
+		s.get("avg", 0.0), s.get("p50", 0.0), s.get("p95", 0.0), s.get("p99", 0.0), s.get("max", 0.0), unit]
 
 
 static func _frames(r: Dictionary) -> PackedStringArray:
@@ -141,4 +151,110 @@ static func _worst(r: Dictionary) -> PackedStringArray:
 		for row: Dictionary in w.get("tree", []):
 			if float(row.ms) >= FRAME_MIN_MS:
 				out.append("    %-60s %7.2f %7.2f  x%d" % [String(row.path).right(60), row.ms, row.self_ms, row.calls])
+	return out
+
+
+static func _growth(r: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	var g: Dictionary = r.get("growth", {})
+	if g.is_empty():
+		return out
+	out.append("")
+	out.append("Growth over the recording (first -> last, per minute):")
+	for k: String in g:
+		var row: Dictionary = g[k]
+		out.append("  %-22s %10.1f -> %10.1f  %+10.1f  (%+.1f/min, max %.1f)" % [k, row.first, row.last, row.delta,
+			row.per_min, row.max])
+	return out
+
+
+static func _groups(r: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	var groups: Array = r.get("groups", [])
+	if groups.is_empty():
+		return out
+	out.append("")
+	out.append("Groups (count per frame; systems under the prefix, cost per unit):")
+	for g: Dictionary in groups:
+		var c: Dictionary = g.count
+		out.append("  %-22s avg %7.1f  min %5.0f  max %5.0f%s" % [String(g.group).left(22), c.avg, c.min, c.max,
+			("  systems " + String(g.prefix) + "*") if String(g.prefix) != "" else ""])
+		for s: Dictionary in g.get("systems", []):
+			out.append("    %-34s %8.3f ms/frame  %9.1f us/unit  %7.1f calls/fr" % [String(s.system).left(34),
+				s.ms_per_frame, s.us_per_unit, s.calls_per_frame])
+	return out
+
+
+static func _scripts(r: Dictionary, top: int) -> PackedStringArray:
+	var out := PackedStringArray()
+	var sf: Dictionary = r.get("script_functions", {})
+	if sf.is_empty():
+		return out
+	out.append("")
+	if not sf.get("ok", false):
+		out.append("Script functions: off (%s)" % sf.get("reason", ""))
+		return out
+	out.append("Script functions (GDScript profiler, ms per frame; %d functions, %.2f ms self per frame):" % [
+		sf.get("function_count", 0), sf.get("self_ms", 0.0)])
+	out.append("  %-44s %8s %8s %9s %8s" % ["function", "self", "total", "calls/fr", "us/call"])
+	for f: Dictionary in (sf.get("functions", []) as Array).slice(0, top):
+		var label := "%s %s:%d" % [f.function, String(f.script).get_file(), f.line]
+		out.append("  %-44s %8.3f %8.3f %9.1f %8.2f" % [label.left(44), f.self_ms, f.total_ms, f.calls_per_frame,
+			f.us_per_call])
+	var buckets: Array = sf.get("buckets", [])
+	if not buckets.is_empty():
+		out.append("  buckets (self ms per frame):")
+		for b: Dictionary in buckets:
+			out.append("    %-22s %8.3f ms  %9.1f calls/fr  %4d functions" % [String(b.bucket).left(22), b.self_ms,
+				b.calls_per_frame, b.functions])
+	var scripts: Array = sf.get("scripts", [])
+	if not scripts.is_empty():
+		out.append("  by script (self ms per frame):")
+		for s: Dictionary in scripts.slice(0, mini(top, 10)):
+			out.append("    %-44s %8.3f ms  %9.1f calls/fr" % [String(s.script).right(44), s.self_ms, s.calls_per_frame])
+	return out
+
+
+static func _timeline(r: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	var tl: Dictionary = r.get("timeline", {})
+	if tl.is_empty():
+		return out
+	out.append("")
+	out.append("Timeline (per second; ms per frame; flagged = over budget or %.0fx the running average):" % DotProfilerSession.FLAG_X)
+	out.append("  %4s %6s %8s %8s %8s %8s %8s %8s %8s" % ["s", "frames", "avg", "max", "physics", "script", "render", "wait", "flagged"])
+	for row: Dictionary in tl.get("seconds", []):
+		out.append("  %4d %6d %8.2f %8.2f %8.2f %8.2f %8.2f %8.2f %8d" % [row.s, row.frames, row.avg_ms, row.max_ms,
+			row.physics, row.script, row.render, row.wait, row.flagged])
+	var flagged: Array = (tl.get("flagged", []) as Array).duplicate()
+	if flagged.is_empty():
+		return out
+	flagged.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.ms > b.ms)
+	out.append("  flagged frames (%d, slowest first; what ran in them):" % flagged.size())
+	var t0 := float(tl.get("t0", 0.0))
+	for f: Dictionary in flagged.slice(0, FLAGGED_LINES):
+		out.append("    t=%.2fs %.1f ms (avg %.1f)  [phys %.1f script %.1f render %.1f wait %.1f]" % [float(f.t) - t0,
+			f.ms, f.avg_ms, f.get("physics", 0.0), f.get("script", 0.0), f.get("render", 0.0), f.get("wait", 0.0)])
+		var parts := PackedStringArray()
+		for s: Dictionary in f.get("systems", []):
+			parts.append("%s %.2f" % [s.system, s.ms])
+		if not parts.is_empty():
+			out.append("      systems: " + ", ".join(parts))
+		parts = PackedStringArray()
+		for t: Dictionary in f.get("top", []):
+			parts.append("%s %.2f" % [String(t.path).get_slice(";", String(t.path).get_slice_count(";") - 1), t.self_ms])
+		if not parts.is_empty():
+			out.append("      self: " + ", ".join(parts))
+	return out
+
+
+static func _census(r: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	var c: Dictionary = r.get("census", {})
+	if c.is_empty():
+		return out
+	out.append("")
+	out.append("Node census: %d -> %d nodes (biggest changes):" % [c.get("start_nodes", 0), c.get("end_nodes", 0)])
+	for row: Dictionary in (c.get("classes", []) as Array).slice(0, CENSUS_LINES):
+		out.append("  %-32s %6d -> %6d  %+6d" % [String(row["class"]).left(32), row.start, row.end, row.delta])
 	return out

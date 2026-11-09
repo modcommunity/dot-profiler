@@ -58,6 +58,11 @@ var _stop_pending := false
 var _session: DotProfilerSession = null
 var _ticks: DotProfilerTicks = null
 var _deep := {}
+var _counters: Array[Dictionary] = []
+var _scripts: DotProfilerScripts = null
+var _script_report := {}
+var _census_start := {}
+var _census := {}
 
 
 func _ready() -> void:
@@ -121,6 +126,22 @@ func start_recording(seconds: float = 0.0) -> DotResult:
 	_session = DotProfilerSession.new()
 	_session.monitors = config.monitors
 	_session.worst_keep = config.worst_frames
+	_session.timeline = config.timeline
+	_session.budget_ms = config.budget_ms
+	_session.render_detail = config.render_detail
+	_session.viewport = get_viewport().get_viewport_rid()
+	_session.counters = _recording_counters()
+	_session.begin()
+	_census = {}
+	_census_start = census() if config.census else {}
+	_script_report = {}
+	if config.script_top > 0:
+		_scripts = DotProfilerScripts.new()
+		var sr := _scripts.start()
+		if not sr.ok:
+			_scripts = null
+			_script_report = {"ok": false, "reason": sr.error.message}
+			DotLog.warn(CHANNEL, "script functions off: %s" % sr.error.message)
 	if _ticks == null:
 		_ticks = DotProfilerTicks.new()
 		add_child(_ticks)
@@ -137,6 +158,12 @@ func stop_recording() -> DotResult:
 	if not _recording:
 		return DotResult.fail(DotError.CODE_STATE, "No recording is running.")
 	_recording = false
+	if _scripts != null:
+		_script_report = _scripts.stop(config.script_top, _rec_frames.size(),
+			DotProfilerConfig.parse_buckets(config.script_buckets))
+		_scripts = null
+	if config.census and not _census_start.is_empty():
+		_census = census_diff(_census_start, census())
 	var report := build_report()
 	var res := DotProfilerReport.write(report, config.record_dir, config.keep_recordings,
 		_session.folded() if _session != null else "")
@@ -164,7 +191,80 @@ func build_report() -> Dictionary:
 		"sample_hz": config.sample_hz, "samples": _rec_samples, "deep": _deep}
 	if _session != null:
 		meta.merge(_session.to_report())
-	return DotProfilerReport.build(_rec_frames, _rec_spikes, _rec_systems, _rec_phases, meta)
+	if not _script_report.is_empty():
+		meta["script_functions"] = _script_report
+	if not _census.is_empty():
+		meta["census"] = _census
+	var report := DotProfilerReport.build(_rec_frames, _rec_spikes, _rec_systems, _rec_phases, meta)
+	DotProfilerSession.attach_group_systems(report)
+	return report
+
+
+## Adds a count read every frame while recording, reported beside the cost of systems starting with
+## [param prefix] (e.g. bots and "arena.bot"). [param count] returns an int; it replaces a group of that name.
+func add_counter(group: String, count: Callable, prefix: String = "") -> void:
+	remove_counter(group)
+	_counters.append({"group": group, "prefix": prefix, "count": count})
+
+
+func remove_counter(group: String) -> void:
+	for i in range(_counters.size() - 1, -1, -1):
+		if _counters[i].group == group:
+			_counters.remove_at(i)
+
+
+## Nodes in the tree by class (a script's class_name when it has one): {name: count}.
+func census() -> Dictionary:
+	var out := {}
+	var stack: Array[Node] = [get_tree().root]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		var key := n.get_class()
+		var sc := n.get_script() as Script
+		if sc != null and sc.get_global_name() != &"":
+			key = String(sc.get_global_name())
+		out[key] = int(out.get(key, 0)) + 1
+		stack.append_array(n.get_children(true))
+	return out
+
+
+## Two [method census] results as {start_nodes, end_nodes, classes: [{class, start, end, delta}]}, biggest change first.
+static func census_diff(a: Dictionary, b: Dictionary) -> Dictionary:
+	var rows: Array = []
+	var total_a := 0
+	var total_b := 0
+	var names := a.keys()
+	for k: Variant in b:
+		if not a.has(k):
+			names.append(k)
+	for k: Variant in names:
+		var x: int = a.get(k, 0)
+		var y: int = b.get(k, 0)
+		total_a += x
+		total_b += y
+		rows.append({"class": String(k), "start": x, "end": y, "delta": y - x})
+	rows.sort_custom(func(p: Dictionary, q: Dictionary) -> bool:
+		return absi(p.delta) > absi(q.delta) or (p.delta == q.delta and p.end > q.end))
+	return {"start_nodes": total_a, "end_nodes": total_b, "classes": rows}
+
+
+func _recording_counters() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for g in DotProfilerConfig.parse_groups(config.groups):
+		var made := false
+		for c: Dictionary in _counters:
+			if c.group == g.group:
+				out.append({"group": c.group, "prefix": g.prefix if g.prefix != "" else String(c.prefix), "count": c.count})
+				made = true
+		if not made:
+			out.append({"group": g.group, "prefix": g.prefix, "count": get_tree().get_node_count_in_group.bind(StringName(g.group))})
+	for c: Dictionary in _counters:
+		var listed := false
+		for o: Dictionary in out:
+			listed = listed or o.group == c.group
+		if not listed:
+			out.append(c)
+	return out
 
 
 ## Starts a capture of profiler_capture_seconds, or stops the running recording and writes it: the one-key profile.
