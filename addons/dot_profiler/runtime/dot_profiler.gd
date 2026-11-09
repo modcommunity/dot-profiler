@@ -61,6 +61,8 @@ var _ticks: DotProfilerTicks = null
 var _deep := {}
 var _counters: Array[Dictionary] = []
 var _contexts: Dictionary = {}
+var _console: WeakRef = null
+var _cvars_first: Dictionary = {}
 var _hooks: Array[Dictionary] = []
 var _force_render := false
 var _context := {}
@@ -216,7 +218,8 @@ func build_report() -> Dictionary:
 
 
 ## Adds a report key under [code]context[/code]: [param provider] returns a Dictionary (or any value) read when a
-## recording starts, so a game says what it ran (build, map, bots, natives loaded, cvar overrides). Free until then.
+## recording starts, so a game says what it ran (map, bots, natives loaded). Free until then. `machine`, `build`,
+## `launch` and (with a console bound) `cvars` are always there; a provider under one of those keys replaces it.
 func add_context(key: String, provider: Callable) -> void:
 	_contexts[key] = provider
 
@@ -234,7 +237,11 @@ func extras() -> Dictionary:
 
 
 func _read_context() -> Dictionary:
-	var out := {"machine": DotProfilerContext.machine()}
+	var out := {"machine": DotProfilerContext.machine(), "build": DotProfilerContext.build()}
+	out["launch"] = DotProfilerContext.launch()
+	var local: Object = _console.get_ref() if _console != null else null
+	if local != null:
+		out["cvars"] = DotProfilerContext.cvars(local, _cvars_first)
 	for k: String in _contexts:
 		out[k] = (_contexts[k] as Callable).call()
 	return out
@@ -450,6 +457,9 @@ func set_overlay_visible(on: bool) -> void:
 func bind_console(local: Object) -> void:
 	if local == null or not local.has_method(&"add_command"):
 		return
+	_console = weakref(local)
+	# After this frame, when the game has added its variables: what a later report calls changed is measured from here.
+	_baseline_cvars.call_deferred()
 	for key in config.config_keys():
 		local.call(&"add_var", DotProfilerConfig.cvar_name(key), "Profiler: %s." % key,
 			config.text_of.bind(key), _set_from_console.bind(key))
@@ -465,6 +475,12 @@ func bind_console(local: Object) -> void:
 		func(_a: PackedStringArray) -> Variant: return toggle_capture())
 	local.call(&"add_command", &"profiler_compare", "Compare recordings (JSON paths): two paths, one path against the newest, none for the two newest (or profiler_reference against the newest).",
 		func(a: PackedStringArray) -> Variant: return compare_recordings(a[0] if not a.is_empty() else config.reference, a[1] if a.size() > 1 else ""))
+
+
+func _baseline_cvars() -> void:
+	var local: Object = _console.get_ref() if _console != null else null
+	if local != null:
+		var _seen := DotProfilerContext.cvars(local, _cvars_first)
 
 
 ## Where the look settings are kept between runs (user://); "" disables saving.

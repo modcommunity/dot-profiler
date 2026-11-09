@@ -13,6 +13,13 @@
 # The server suite section uses a real dot-server console and dot-server-query snapshot.
 /addons/dot_server
 /addons/dot_server_query
+# Never tracked: whatever else a tool links here belongs to that tool's run.
+/addons/dot_auth
+/addons/dot_cloud
+/addons/dot_moderation
+/addons/dot_sql
+/addons/dot_stats
+/addons/dot_voice
 
 # Rendered frames are looked at, not kept.
 /screenshots/
