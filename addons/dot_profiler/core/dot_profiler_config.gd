@@ -104,6 +104,9 @@ extends DotConfig
 ## Frames a recording keeps whole (their full tree), worst first.
 @export var worst_frames: int = 5
 
+## A saved report (JSON path) every recording is diffed against when it is written; the diff is logged and saved as .diff.txt.
+@export var reference: String = ""
+
 ## Seconds the capture key (or profiler_capture) records.
 @export var capture_seconds: float = 10.0
 

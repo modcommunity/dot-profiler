@@ -68,6 +68,7 @@ static func to_text(r: Dictionary, top: int = 20) -> PackedStringArray:
 	out.append("frames=%d over %.1f s  p50=%.1f p95=%.1f p99=%.1f worst=%.1f ms  budget=%.1f ms  spikes=%d" % [
 		r.get("frames", 0), r.get("wall_s", 0.0), r.get("p50_ms", 0.0), r.get("p95_ms", 0.0), r.get("p99_ms", 0.0),
 		r.get("worst_ms", 0.0), r.get("budget_ms", 0.0), r.get("spike_count", 0)])
+	out.append_array(DotProfilerContext.lines(r))
 	var ph: Dictionary = r.get("phases", {})
 	if not ph.is_empty():
 		out.append("time in: physics %.0f ms, script %.0f ms, render %.0f ms, wait %.0f ms" % [

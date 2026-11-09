@@ -17,6 +17,7 @@ const CENSUS_LINES := 12
 
 static func lines(r: Dictionary, top: int = 20) -> PackedStringArray:
 	var out := PackedStringArray()
+	out.append_array(_breakdown(r))
 	out.append_array(_frames(r))
 	out.append_array(_ticks(r))
 	out.append_array(_monitors(r))
@@ -28,6 +29,7 @@ static func lines(r: Dictionary, top: int = 20) -> PackedStringArray:
 	out.append_array(_timeline(r))
 	out.append_array(_worst(r))
 	out.append_array(_census(r))
+	out.append_array(_extras(r))
 	var o: Dictionary = r.get("overhead", {})
 	if not o.is_empty():
 		out.append("")
@@ -59,6 +61,48 @@ static func _frames(r: Dictionary) -> PackedStringArray:
 	return out
 
 
+## The frame as the sum of its parts: engine phases, then what is left over; and the named spans a game reported.
+static func _breakdown(r: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	var ph: Dictionary = r.get("phases", {})
+	var frames := maxf(float(r.get("frames", 0)), 1.0)
+	if ph.is_empty() or float(r.get("frames", 0)) <= 0.0:
+		return out
+	var avg := float(r.get("wall_s", 0.0)) * 1000.0 / frames
+	var parts := 0.0
+	var cells := PackedStringArray()
+	for k: String in ["physics", "script", "render", "wait"]:
+		var v := float(ph.get(k, 0.0)) / frames
+		parts += v
+		cells.append("%s %.2f" % [k, v])
+	out.append("")
+	out.append("Per frame: %.2f ms (%.0f fps) = %s + unaccounted %.2f ms" % [avg, 1000.0 / maxf(avg, 0.001), " + ".join(cells), avg - parts])
+	var named := 0.0
+	for s: Dictionary in r.get("systems", []):
+		named += float(s.get("ms_per_frame", 0.0))
+	if named > 0.0:
+		out.append("  named systems %.2f ms per frame (spans may nest, so this can exceed script time); see Systems below" % named)
+	var m: Dictionary = r.get("monitors", {})
+	if m.has("render_cpu_ms") or m.has("render_gpu_ms"):
+		out.append("  render: cpu %.2f ms avg (p95 %.2f), gpu %.2f ms avg (p95 %.2f)" % [
+			float((m.get("render_cpu_ms", {}) as Dictionary).get("avg", 0.0)), float((m.get("render_cpu_ms", {}) as Dictionary).get("p95", 0.0)),
+			float((m.get("render_gpu_ms", {}) as Dictionary).get("avg", 0.0)), float((m.get("render_gpu_ms", {}) as Dictionary).get("p95", 0.0))])
+	else:
+		out.append("  render cpu/gpu ms: not recorded (profiler_render_detail 1, or use the capture key, records them)")
+	return out
+
+
+static func _extras(r: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	var ex: Dictionary = r.get("extras", {})
+	for k: String in ex:
+		if out.is_empty():
+			out.append("")
+			out.append("Game extras:")
+		out.append("  %s: %s" % [k, DotProfilerContext.flat(ex[k])])
+	return out
+
+
 static func _ticks(r: Dictionary) -> PackedStringArray:
 	var out := PackedStringArray()
 	var t: Dictionary = r.get("physics_ticks", {})
@@ -76,6 +120,8 @@ static func _ticks(r: Dictionary) -> PackedStringArray:
 	for k: Variant in keys:
 		parts.append("%sx %d" % [k, hist[k]])
 	out.append("  ticks per frame: " + "  ".join(parts))
+	if t.has("ticks_per_sec"):
+		out.append("  %.1f ticks/s achieved of %d/s; dropped (never simulated): %d" % [t.ticks_per_sec, t.get("per_second", 0), t.get("dropped_ticks", 0)])
 	var ticks := maxi(int(t.get("ticks", 0)), 1)
 	for row: Dictionary in r.get("tree", []):
 		if row.path == "frame;physics;scripts" or row.path == "frame;physics;step":

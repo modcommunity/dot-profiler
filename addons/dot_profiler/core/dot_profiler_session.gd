@@ -159,6 +159,10 @@ func to_report(min_tree_ms: float = 0.001) -> Dictionary:
 	var hist := {}
 	for k: int in _ticks_hist:
 		hist[str(k)] = _ticks_hist[k]
+	var wall_s := 0.0
+	for v in _frame_ms:
+		wall_s += v / 1000.0
+	var dropped := maxi(int(round(wall_s * Engine.physics_ticks_per_second)) - _ticks, 0)
 	var out := {
 		"frame_stats": stats,
 		"tree": tree.rows(min_tree_ms),
@@ -168,7 +172,8 @@ func to_report(min_tree_ms: float = 0.001) -> Dictionary:
 		"traced_queries": tree.traced_queries(),
 		"physics_ticks": {"ticks": _ticks, "per_second": Engine.physics_ticks_per_second,
 			"max_per_frame": Engine.max_physics_steps_per_frame, "per_frame": float(_ticks) / frames,
-			"histogram": hist, "catch_up_frames": _catch_up, "spiral_frames": _spiral},
+			"histogram": hist, "catch_up_frames": _catch_up, "spiral_frames": _spiral,
+			"wall_s": wall_s, "ticks_per_sec": float(_ticks) / maxf(wall_s, 0.001), "dropped_ticks": dropped},
 		"overhead": {"on_frame_avg_ms": _overhead_us / 1000.0 / frames, "on_frame_max_ms": _overhead_max_us / 1000.0,
 			"spans_per_frame": float(_spans) / frames, "trace": _spans > 0},
 		"growth": _growth(),

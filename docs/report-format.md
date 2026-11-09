@@ -25,9 +25,18 @@ A recording writes three files next to each other in `profiler_record_dir`: `pro
 | `monitors` | Engine monitors read every frame, each `{min, avg, p50, p95, p99, max}`: `time_process_ms`, `time_physics_ms`, `time_navigation_ms`, `physics_3d_active`, `physics_3d_pairs`, `physics_3d_islands`, `draw_calls`, `objects_drawn`, `primitives`, `objects`, `nodes`, `orphan_nodes`, `static_mb`, `video_mb`. |
 | `queries` | Physics queries by caller and kind, costliest first: `{system, kind, ms, calls, worst_ms, ms_per_frame, calls_per_frame, calls_per_tick, us_per_call}`. Kinds are `cast_motion`, `rest_info`, `intersect_ray`, `intersect_shape`, `intersect_point`, `collide_shape`, `move_and_collide`, `body_test_motion` and whatever a system passes to `DotFrameCost.add_query`. Unnamed callers are `unattributed`. |
 | `traced_queries` | `{caller: {kind: {ms, calls}}}` from the tree: the span each `q.<kind>` ran inside, which can be finer than the `system` passed in. |
-| `physics_ticks` | `{ticks, per_second, max_per_frame, per_frame, histogram, catch_up_frames, spiral_frames}`. `histogram` maps ticks-in-a-frame (as a string) to frames. A catch-up frame ran 2 or more ticks; a spiral frame hit `max_physics_steps_per_frame`. |
+| `physics_ticks` | `{ticks, per_second, max_per_frame, per_frame, histogram, catch_up_frames, spiral_frames, wall_s, ticks_per_sec, dropped_ticks}`. `dropped_ticks` is the ticks the wall time called for (`wall_s` x `per_second`) minus the ticks that ran. `histogram` maps ticks-in-a-frame (as a string) to frames. A catch-up frame ran 2 or more ticks; a spiral frame hit `max_physics_steps_per_frame`. |
 | `overhead` | `{on_frame_avg_ms, on_frame_max_ms, spans_per_frame, trace}`: the profiler's own per-frame cost while recording, measured around its frame handler. |
 | `deep` | Empty unless `profiler_deep` is on: `{ok, file, pid, command}` or `{ok: false, reason}` ([deep-mode.md](deep-mode.md)). |
+
+## Context keys
+
+| Key | Meaning |
+| --- | --- |
+| `context` | `{machine, <game keys>}`. `machine` is `{os, cpu, cores, ram_mb, gpu, gpu_vendor, driver, renderer, godot, debug_build, tick_rate, max_fps, window, vsync, display}`; a game adds keys with `DotProfiler.add_context(key, provider)` (build, map, bots, natives loaded, cvar overrides). Read when the recording starts. |
+| `extras` | `{<key>: Dictionary}` from `DotProfiler.add_recording_hook(key, begin, end)`: what `end` returned when the recording stopped (a game's native timers). A hook returning an empty Dictionary is left out. |
+
+The capture key and `profiler_capture` turn `render_detail` on for that capture, so `render_cpu_ms` and `render_gpu_ms` are there; `profiler_reference` (a JSON path) diffs every written report against that file and saves `<report>.diff.txt`.
 
 ## Detail keys
 

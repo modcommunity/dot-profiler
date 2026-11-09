@@ -60,6 +60,11 @@ var _session: DotProfilerSession = null
 var _ticks: DotProfilerTicks = null
 var _deep := {}
 var _counters: Array[Dictionary] = []
+var _contexts: Dictionary = {}
+var _hooks: Array[Dictionary] = []
+var _force_render := false
+var _context := {}
+var _last_extras := {}
 var _scripts: DotProfilerScripts = null
 var _script_report := {}
 var _census_start := {}
@@ -130,10 +135,13 @@ func start_recording(seconds: float = 0.0) -> DotResult:
 	_session.worst_keep = config.worst_frames
 	_session.timeline = config.timeline
 	_session.budget_ms = config.budget_ms
-	_session.render_detail = config.render_detail
+	_session.render_detail = config.render_detail or _force_render
 	_session.viewport = get_viewport().get_viewport_rid()
 	_session.counters = _recording_counters()
 	_session.begin()
+	_context = _read_context()
+	for h in _hooks:
+		(h.begin as Callable).call()
 	_census = {}
 	_census_start = census() if config.census else {}
 	_script_report = {}
@@ -167,6 +175,7 @@ func stop_recording() -> DotResult:
 	if config.census and not _census_start.is_empty():
 		_census = census_diff(_census_start, census())
 	var report := build_report()
+	_force_render = false
 	var res := DotProfilerReport.write(report, config.record_dir, config.keep_recordings,
 		_session.folded() if _session != null else "")
 	if _ticks != null:
@@ -175,8 +184,9 @@ func stop_recording() -> DotResult:
 	_apply()
 	if res.ok:
 		_last_saved = res.value
-		DotLog.info(CHANNEL, "profile saved to %s (%d frames, %d spikes, p99 %.1f ms)" % [
-			_last_saved, report.frames, report.spike_count, report.p99_ms])
+		DotLog.info(CHANNEL, "profile saved to %s (%d frames, %d spikes, p99 %.1f ms); text report beside it (.txt)" % [
+			ProjectSettings.globalize_path(_last_saved), report.frames, report.spike_count, report.p99_ms])
+		_diff_reference(res.value)
 	else:
 		DotLog.warn(CHANNEL, "profile not saved: %s" % res.error.message)
 	recording_finished.emit(res)
@@ -193,6 +203,8 @@ func build_report() -> Dictionary:
 		"sample_hz": config.sample_hz, "samples": _rec_samples, "deep": _deep}
 	if _session != null:
 		meta.merge(_session.to_report())
+		meta["context"] = _context
+		meta["extras"] = _read_extras()
 	if not _script_report.is_empty():
 		meta["script_functions"] = _script_report
 	if not _census.is_empty():
@@ -201,6 +213,55 @@ func build_report() -> Dictionary:
 	DotProfilerSession.attach_group_systems(report)
 	DotProfilerCatalog.strip(report, config)
 	return report
+
+
+## Adds a report key under [code]context[/code]: [param provider] returns a Dictionary (or any value) read when a
+## recording starts, so a game says what it ran (build, map, bots, natives loaded, cvar overrides). Free until then.
+func add_context(key: String, provider: Callable) -> void:
+	_contexts[key] = provider
+
+
+## Adds [code]extras[key][/code] to the report: [param begin] runs when a recording starts (reset a native timer, turn
+## it on), [param end] returns the Dictionary to report when it stops. Free while no recording runs.
+func add_recording_hook(key: String, begin: Callable, end: Callable) -> void:
+	_hooks = _hooks.filter(func(h: Dictionary) -> bool: return h.key != key)
+	_hooks.append({"key": key, "begin": begin, "end": end})
+
+
+## What the recording hooks report now (while recording) or reported last: {key: Dictionary}.
+func extras() -> Dictionary:
+	return _read_extras() if _recording else _last_extras
+
+
+func _read_context() -> Dictionary:
+	var out := {"machine": DotProfilerContext.machine()}
+	for k: String in _contexts:
+		out[k] = (_contexts[k] as Callable).call()
+	return out
+
+
+func _read_extras() -> Dictionary:
+	var out := {}
+	for h in _hooks:
+		var v: Variant = (h.end as Callable).call()
+		if v is Dictionary and not (v as Dictionary).is_empty():
+			out[h.key] = v
+	_last_extras = out
+	return out
+
+
+## Diffs the saved recording against profiler_reference when one is set; the text goes to the log and to a
+## .diff.txt beside the report.
+func _diff_reference(saved_json: String) -> void:
+	if config.reference == "":
+		return
+	var res := compare_recordings(config.reference, saved_json)
+	if not res.ok:
+		DotLog.warn(CHANNEL, "reference diff: %s" % res.error.message)
+		return
+	var text := "\n".join(res.value as PackedStringArray)
+	var _w := DotPaths.write_text(saved_json.get_basename() + ".diff.txt", text + "\n")
+	DotLog.info(CHANNEL, "diff against %s (saved to %s.diff.txt):\n%s" % [config.reference.get_file(), saved_json.get_basename(), text])
 
 
 ## Adds a count reported beside the cost of systems starting with [param prefix] (e.g. bots and "arena.bot").
@@ -267,7 +328,16 @@ func _recording_counters() -> Array[Dictionary]:
 
 ## Starts a capture of profiler_capture_seconds, or stops the running recording and writes it: the one-key profile.
 func toggle_capture() -> DotResult:
-	return stop_recording() if _recording else start_recording(config.capture_seconds)
+	if _recording:
+		return stop_recording()
+	_force_render = true
+	var res := start_recording(config.capture_seconds)
+	if res.ok:
+		DotLog.info(CHANNEL, "capture started (%.0f s); press the capture key or run profiler_stop to end it early. Reports go to %s" % [
+			config.capture_seconds, ProjectSettings.globalize_path(config.record_dir)])
+	else:
+		_force_render = false
+	return res
 
 
 ## Binds [param keycode] to [constant CAPTURE_ACTION] when the project has no binding, and listens for it.
@@ -290,12 +360,17 @@ func _input(event: InputEvent) -> void:
 
 ## Compares two recordings (JSON paths); with none, the two newest. The value is the text lines.
 func compare_recordings(path_a: String = "", path_b: String = "") -> DotResult:
-	if path_a == "" or path_b == "":
+	if path_b == "":
 		var recent := recent_recordings(2)
-		if recent.size() < 2:
-			return DotResult.fail(DotError.CODE_STATE, "Two recordings are needed to compare; %d found in %s." % [recent.size(), config.record_dir])
-		path_a = recent[1].path
-		path_b = recent[0].path
+		if path_a != "":
+			if recent.is_empty():
+				return DotResult.fail(DotError.CODE_STATE, "No recording in %s to compare %s with." % [config.record_dir, path_a])
+			path_b = recent[0].path
+		else:
+			if recent.size() < 2:
+				return DotResult.fail(DotError.CODE_STATE, "Two recordings are needed to compare; %d found in %s." % [recent.size(), config.record_dir])
+			path_a = recent[1].path
+			path_b = recent[0].path
 	var a := DotProfilerCompare.load_report(path_a)
 	if not a.ok:
 		return a
@@ -388,8 +463,8 @@ func bind_console(local: Object) -> void:
 		func(_a: PackedStringArray) -> Variant: return describe_lines())
 	local.call(&"add_command", &"profiler_capture", "Start a capture of profiler_capture_seconds, or stop and write it.",
 		func(_a: PackedStringArray) -> Variant: return toggle_capture())
-	local.call(&"add_command", &"profiler_compare", "Compare two recordings (JSON paths; default the two newest), ms per frame.",
-		func(a: PackedStringArray) -> Variant: return compare_recordings(a[0] if a.size() > 1 else "", a[1] if a.size() > 1 else ""))
+	local.call(&"add_command", &"profiler_compare", "Compare recordings (JSON paths): two paths, one path against the newest, none for the two newest (or profiler_reference against the newest).",
+		func(a: PackedStringArray) -> Variant: return compare_recordings(a[0] if not a.is_empty() else config.reference, a[1] if a.size() > 1 else ""))
 
 
 ## Where the look settings are kept between runs (user://); "" disables saving.
@@ -438,6 +513,9 @@ func describe_lines() -> PackedStringArray:
 	out.append("  frame %.1f ms (budget %.1f)" % [_avg_ms, config.budget_ms])
 	for row in top_costs(config.overlay_top):
 		out.append("  %-28s %.2f ms" % [row.system, row.ms])
+	var ex := extras()
+	for k: String in ex:
+		out.append("  %s: %s" % [k, DotProfilerContext.flat(ex[k])])
 	if not _last_spike.is_empty():
 		out.append("  last spike: " + DotProfilerReport.spike_line(_last_spike))
 	return out

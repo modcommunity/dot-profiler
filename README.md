@@ -25,6 +25,8 @@ A spike then logs at WARN as, for example, `frame 41.2 ms over 33.0 ms budget: t
 
 Everything is off by default: `profiler_enabled 1` watches, `profiler_overlay 1` draws, `record 30` writes `user://profiles/<stamp>.json`, `.txt` and `.folded`. `prof.enable_capture_key()` makes F10 start and stop a capture with the call tree, physics ticks and queries, engine monitors and the worst frames; `profiler_compare` diffs the two newest.
 
+Every report starts with a `context` (OS, CPU, GPU and driver, Godot build, window, vsync, tick rate, plus whatever the game registers with `prof.add_context("build", func(): return {...})`), carries `extras` from `prof.add_recording_hook("native", begin, end)` (a game's native timers), and counts dropped physics ticks. A capture (F10 or `profiler_capture`) logs where it writes; set `profiler_reference <path.json>` and each written report is also diffed against that file (`.diff.txt`). `profiler_compare a.json b.json` diffs two files, with one path against the newest.
+
 More detail when asked for, each off by default: `profiler_timeline 1` (every frame, spikes flagged with what ran in them), `profiler_render_detail 1` (texture and buffer memory, draw split, render cpu/gpu ms), `profiler_groups bots:arena.bot` (unit counts per frame and each system's cost per unit), `profiler_census 1` (node classes that grew), `profiler_script_top 30` (GDScript functions by self time with calls; run with `-d`) and `tools/profile_compare.py baseline.json new.json --diff` (only changes past the 5% noise floor). [docs/design.md](docs/design.md#configuration) lists them.
 
 On a dedicated server, `DotProfilerServer.new().install(prof)` adds admin-only `sv_profiler_record`, `sv_profiler_stop`, `sv_profiler_status` and metric commands (frame, hitches, systems, memory, net, and all of them as one JSON line) to dot-server's console and RCON, the `profiler_*` cvars, and optional query keys. Recordings go to `<log_directory>/profiles`.
@@ -44,6 +46,7 @@ On a dedicated server, `DotProfilerServer.new().install(prof)` adds admin-only `
 godot --headless --path . --import
 godot --headless --path . res://examples/profiler_selftest.tscn
 godot --headless --path . res://examples/profiler_detail_selftest.tscn
+godot --headless --path . res://examples/profiler_context_selftest.tscn
 python3 tools/profile_compare_test.py
 godot --headless --path . res://addons/dot_profiler/tools/dot_profiler_run.tscn -- --profile-scene res://examples/spiky.tscn --profile-seconds 4 --profile-budget 20
 tools/screenshot.sh screenshots/demo.png
