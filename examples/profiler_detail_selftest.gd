@@ -5,7 +5,7 @@ extends Node
 ## next to one with them off (the default report gains only growth).
 
 const SECTIONS := 6
-const CHECKS := 32
+const CHECKS := 33
 const DIR := "user://profiler_detail_selftest"
 const SCRIPT_TABLE := """ACCUMULATED: total: 0.191661
 0:res://bots/brain.gd::21::think
@@ -129,6 +129,10 @@ func _scripts() -> void:
 		by[b.bucket] = b
 	_check(is_equal_approx(by.bots.self_ms, 1.54647) and int(by.bots.functions) == 2 and is_equal_approx(by.motor.self_ms, 0.02)
 		and int(by.other.functions) == 0, "buckets sum the functions whose script matches")
+	var own: Array[Dictionary] = rows.duplicate()
+	own.append({"signature": "", "script": "res://addons/" + DotProfilerScripts.OWN_SCRIPT, "line": 34, "function": "start", "total_ms": 9000.0, "self_ms": 9000.0, "calls": 1})
+	var without := DotProfilerScripts.summarize(own, 5, 100)
+	_check(int(without.function_count) == 3 and without.functions[0].function == "think", "the profiler's own start call is left out")
 	var res := DotProfilerScripts.new().start()
 	_check(EngineDebugger.is_active() or (not res.ok and res.error.message.contains("-d")), "without -d the script profiler says how to turn it on")
 	_sections += 1

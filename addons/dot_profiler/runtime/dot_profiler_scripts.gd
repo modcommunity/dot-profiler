@@ -8,6 +8,8 @@ extends RefCounted
 
 const CHANNEL := "dot.profiler"
 const HEADER := "ACCUMULATED"
+## Rows from this file are left out: [method start] turns the engine profiler on mid-call, so it reads as open all recording.
+const OWN_SCRIPT := "dot_profiler/runtime/dot_profiler_scripts.gd"
 
 
 class Catcher extends Logger:
@@ -89,7 +91,7 @@ static func parse(lines: PackedStringArray) -> Array[Dictionary]:
 ## [param rows] from [method parse] as {functions, scripts, buckets, total_self_ms}, ms per frame.
 static func summarize(rows: Array[Dictionary], top: int, frames: int, buckets: Array[Dictionary] = []) -> Dictionary:
 	var n := maxf(float(frames), 1.0)
-	var sorted := rows.duplicate()
+	var sorted := rows.filter(func(r: Dictionary) -> bool: return not String(r.script).ends_with(OWN_SCRIPT))
 	sorted.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.self_ms > b.self_ms)
 	var total := 0.0
 	var by_script := {}
@@ -129,7 +131,7 @@ static func summarize(rows: Array[Dictionary], top: int, frames: int, buckets: A
 		for b: Dictionary in by_bucket.values():
 			bucket_rows.append({"bucket": b.bucket, "self_ms": b.self_ms / n, "calls_per_frame": b.calls / n, "functions": b.functions})
 	return {"ok": true, "functions": funcs, "scripts": scripts.slice(0, top), "buckets": bucket_rows,
-		"self_ms": total / n, "function_count": rows.size()}
+		"self_ms": total / n, "function_count": sorted.size()}
 
 
 static func _secs(line: String, key: String) -> float:
