@@ -120,7 +120,7 @@ func _live() -> void:
 	var stopped := prof.toggle_capture()
 	_check(stopped.ok and not prof.is_recording(), "and the second toggle stops and writes it")
 	var cmp := prof.compare_recordings()
-	_check(cmp.ok and "\n".join(cmp.value).contains("system:"), "the two newest recordings compare")
+	_check(cmp.ok and "\n".join(cmp.value).contains("tree:"), "the two newest recordings compare")
 	prof.queue_free()
 	caster.queue_free()
 	floor_body.queue_free()

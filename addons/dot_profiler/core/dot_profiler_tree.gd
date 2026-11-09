@@ -49,9 +49,14 @@ func add_frame(rec: Dictionary, ticks: PackedInt64Array) -> PackedInt64Array:
 	while ri < roots.size() or ei < events.size():
 		# Merge by end time; on a tie the span goes first, since a root ending with it contains it.
 		if ei < events.size() and (ri >= roots.size() or events[ei + 1] <= roots[ri + 1]):
-			var _a := ns.append(maxi(events[ei], w[0]))
-			var _b := ne.append(events[ei + 1])
-			var _c := nk.append(int(events[ei + 2]) + OFFSET)
+			# A span from outside this frame (a stale start stamp, or one ending before the frame began) would
+			# get a negative or oversized duration: keep only what overlaps the frame, clipped to it.
+			var s0 := maxi(events[ei], w[0])
+			var e0 := mini(events[ei + 1], w[4])
+			if e0 > s0:
+				var _a := ns.append(s0)
+				var _b := ne.append(e0)
+				var _c := nk.append(int(events[ei + 2]) + OFFSET)
 			ei += 3
 		else:
 			var _a := ns.append(roots[ri])
