@@ -59,9 +59,9 @@ func setup(profiler: DotProfiler, kit: Object = null) -> void:
 	# A timer, not _process: the elapsed text changes a few times a second, not per frame.
 	var timer := Timer.new()
 	timer.wait_time = 0.1
+	timer.autostart = true  # setup runs before the panel is in the tree, so start() would error
 	timer.timeout.connect(_tick)
 	add_child(timer)
-	timer.start()
 	profiler.recording_started.connect(_on_started)
 	profiler.recording_finished.connect(_on_finished)
 	_refresh()
