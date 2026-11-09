@@ -183,6 +183,14 @@ func stop_recording() -> DotResult:
 	return res
 
 
+## What a report says about the process: engine, OS, build, then whatever the game put in [member DotFrameCost.notes].
+func _run_notes() -> Dictionary:
+	var n := {"engine": Engine.get_version_info().string, "os": OS.get_name(),
+		"build": "debug" if OS.is_debug_build() else "release"}
+	n.merge(DotFrameCost.notes)
+	return n
+
+
 ## The report of the recording so far (or the last one), without writing it.
 func build_report() -> Dictionary:
 	var scene := get_tree().current_scene
@@ -190,7 +198,8 @@ func build_report() -> Dictionary:
 		"budget_ms": config.budget_ms, "seconds": _rec_seconds,
 		"scene": scene.scene_file_path if scene != null else "",
 		"period": DotProfilerPeriod.describe_found(_all_period.detect()),
-		"sample_hz": config.sample_hz, "samples": _rec_samples, "deep": _deep}
+		"sample_hz": config.sample_hz, "samples": _rec_samples, "deep": _deep,
+		"notes": _run_notes()}
 	if _session != null:
 		meta.merge(_session.to_report())
 	if not _script_report.is_empty():

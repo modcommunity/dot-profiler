@@ -65,6 +65,12 @@ static func percentile(sorted: PackedFloat32Array, p: float) -> float:
 static func to_text(r: Dictionary, top: int = 20) -> PackedStringArray:
 	var out := PackedStringArray()
 	out.append("dot-profiler report %s  scene=%s" % [r.get("made", ""), r.get("scene", "")])
+	var notes: Dictionary = r.get("notes", {})
+	if not notes.is_empty():
+		var parts := PackedStringArray()
+		for k: Variant in notes:
+			parts.append("%s: %s" % [k, notes[k]])
+		out.append("run: " + "; ".join(parts))
 	out.append("frames=%d over %.1f s  p50=%.1f p95=%.1f p99=%.1f worst=%.1f ms  budget=%.1f ms  spikes=%d" % [
 		r.get("frames", 0), r.get("wall_s", 0.0), r.get("p50_ms", 0.0), r.get("p95_ms", 0.0), r.get("p99_ms", 0.0),
 		r.get("worst_ms", 0.0), r.get("budget_ms", 0.0), r.get("spike_count", 0)])
