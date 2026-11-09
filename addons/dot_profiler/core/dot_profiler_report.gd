@@ -1,12 +1,12 @@
 class_name DotProfilerReport
 extends RefCounted
 
-## A recording turned into a report, written as JSON and readable text side by side.
+## A recording turned into a report, written as JSON, readable text and folded stacks side by side.
 ## [method build] makes it from frame times, spikes, systems and phases; [method write] saves it
-## under a directory, keeping the newest N, and returns the JSON path.
+## under a directory, keeping the newest N, and returns the JSON path. docs/report-format.md has the keys.
 
 const CHANNEL := "dot.profiler"
-const VERSION := 1
+const VERSION := 2
 
 
 ## The report for one recording. [param frames_ms] is every frame's wall time; [param spikes] the attributed spikes
@@ -96,6 +96,7 @@ static func to_text(r: Dictionary, top: int = 20) -> PackedStringArray:
 		out.append("Worst spikes:")
 		for s: Dictionary in spikes.slice(0, top):
 			out.append("  " + spike_line(s))
+	out.append_array(DotProfilerReportText.lines(r, top))
 	return out
 
 
@@ -109,9 +110,9 @@ static func spike_line(s: Dictionary) -> String:
 		(" repeats " + String(s.period)) if String(s.get("period", "")) != "" else ""]
 
 
-## Writes [param r] as <stamp>.json and <stamp>.txt under [param dir] and keeps the newest [param keep].
-## The value is the JSON path.
-static func write(r: Dictionary, dir: String, keep: int = 20) -> DotResult:
+## Writes [param r] as <stamp>.json and <stamp>.txt, and [param folded] as <stamp>.folded when given,
+## under [param dir] and keeps the newest [param keep]. The value is the JSON path.
+static func write(r: Dictionary, dir: String, keep: int = 20, folded: String = "") -> DotResult:
 	var made := DotPaths.ensure_dir(dir)
 	if not made.ok:
 		return made.wrap("profiler: cannot make %s" % dir)
@@ -123,6 +124,10 @@ static func write(r: Dictionary, dir: String, keep: int = 20) -> DotResult:
 	var t := DotPaths.write_text(base + ".txt", "\n".join(to_text(r)) + "\n")
 	if not t.ok:
 		return t.wrap("profiler: cannot write the text report")
+	if folded != "":
+		var f := DotPaths.write_text(base + ".folded", folded)
+		if not f.ok:
+			return f.wrap("profiler: cannot write the folded stacks")
 	prune(dir, keep)
 	return DotResult.success(base + ".json")
 
@@ -138,7 +143,8 @@ static func list(dir: String) -> Array[Dictionary]:
 	names.reverse()
 	for n: String in names:
 		var path := dir.path_join(n)
-		out.append({"path": path, "text_path": path.get_basename() + ".txt", "name": n.get_basename(),
+		out.append({"path": path, "text_path": path.get_basename() + ".txt", "folded_path": path.get_basename() + ".folded",
+			"name": n.get_basename(),
 			"bytes": DotPaths.file_size(path)})
 	return out
 
@@ -147,7 +153,7 @@ static func list(dir: String) -> Array[Dictionary]:
 static func prune(dir: String, keep: int) -> void:
 	var all := list(dir)
 	for row: Dictionary in all.slice(keep):
-		for p: String in [row.path, row.text_path]:
+		for p: String in [row.path, row.text_path, row.folded_path]:
 			if FileAccess.file_exists(p):
 				var err := DirAccess.remove_absolute(p)
 				if err != OK:

@@ -56,6 +56,21 @@ extends DotConfig
 ## Publish frame time, spikes and memory in the server query's game section (dot-server-query).
 @export var query: bool = false
 
+## While recording, time every span reported through DotFrameCost so the report has a call tree below the systems.
+@export var trace: bool = true
+
+## While recording, read the engine monitors (physics pairs, islands, draw calls, nodes, memory) every frame.
+@export var monitors: bool = true
+
+## Frames a recording keeps whole (their full tree), worst first.
+@export var worst_frames: int = 5
+
+## Seconds the capture key (or profiler_capture) records.
+@export var capture_seconds: float = 10.0
+
+## Also sample native stacks with Linux perf while recording (docs/deep-mode.md).
+@export var deep: bool = false
+
 var _cvars: Dictionary = {}
 
 
@@ -84,6 +99,8 @@ func validate() -> DotResult:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_record_dir must be under user:// or an absolute path, not '%s'." % record_dir)
 	if sample_hz < 0.0 or sample_hz > 60.0:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_sample_hz must be 0 to 60.")
+	if worst_frames < 0 or worst_frames > 50 or capture_seconds <= 0.0 or capture_seconds > 3600.0:
+		return DotResult.fail(DotError.CODE_INVALID, "profiler_worst_frames must be 0 to 50 and profiler_capture_seconds above 0, at most 3600.")
 	return DotResult.success(self)
 
 
