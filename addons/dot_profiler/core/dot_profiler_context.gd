@@ -110,7 +110,7 @@ static func git_head(git: String) -> Dictionary:
 
 
 ## The launch arguments, with the value of anything that names a secret (token, password, key) left out.
-static func launch(args: PackedStringArray = OS.get_cmdline_args()) -> Array:
+static func launch(args: PackedStringArray = OS.get_cmdline_args() + OS.get_cmdline_user_args()) -> Array:
 	var out := []
 	var hide := false
 	for a in args:
