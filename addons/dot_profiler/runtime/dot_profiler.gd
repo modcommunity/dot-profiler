@@ -200,8 +200,9 @@ func build_report() -> Dictionary:
 	return report
 
 
-## Adds a count read every frame while recording, reported beside the cost of systems starting with
-## [param prefix] (e.g. bots and "arena.bot"). [param count] returns an int; it replaces a group of that name.
+## Adds a count reported beside the cost of systems starting with [param prefix] (e.g. bots and "arena.bot").
+## It is read every frame only while recording with [param group] listed in profiler_groups, so registering is free.
+## [param count] returns an int; it replaces a SceneTree group of that name.
 func add_counter(group: String, count: Callable, prefix: String = "") -> void:
 	remove_counter(group)
 	_counters.append({"group": group, "prefix": prefix, "count": count})
@@ -258,12 +259,6 @@ func _recording_counters() -> Array[Dictionary]:
 				made = true
 		if not made:
 			out.append({"group": g.group, "prefix": g.prefix, "count": get_tree().get_node_count_in_group.bind(StringName(g.group))})
-	for c: Dictionary in _counters:
-		var listed := false
-		for o: Dictionary in out:
-			listed = listed or o.group == c.group
-		if not listed:
-			out.append(c)
 	return out
 
 

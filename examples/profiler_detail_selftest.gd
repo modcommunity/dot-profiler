@@ -166,21 +166,22 @@ func _live() -> void:
 	prof.config.record_dir = DIR
 	prof.config.sample_hz = 0.0
 	add_child(prof)
+	prof.add_counter("made", func() -> int: return 7)
+	prof.add_counter("unlisted", func() -> int: return 3)
 	var base := await _record(prof)
 	_check(base.has("growth") and not base.has("timeline") and not base.has("groups") and not base.has("census")
-		and not base.has("script_functions") and not (base.monitors as Dictionary).has("texture_mb"), "the default report gains only growth")
+		and not base.has("script_functions") and not (base.monitors as Dictionary).has("texture_mb"), "the default report gains only growth, registered counters included")
 	prof.config.timeline = true
 	prof.config.render_detail = true
 	prof.config.census = true
 	prof.config.script_top = 10
 	prof.config.groups = "selftest_units,made:selftest."
-	prof.add_counter("made", func() -> int: return 7)
 	var r := await _record(prof)
 	_check((r.timeline.frame_ms as Array).size() == int(r.frames) and (r.monitors as Dictionary).has("texture_mb")
 		and (r.monitors as Dictionary).has("draws_visible"), "timeline and render detail are recorded")
 	var g: Array = r.groups
 	_check(g.size() == 2 and is_equal_approx(g[0].count.avg, 1.0) and g[1].group == "made" and is_equal_approx(g[1].count.avg, 7.0),
-		"a SceneTree group and a game counter are counted")
+		"a SceneTree group and a listed game counter are counted, an unlisted one is not")
 	_check(int(r.census.end_nodes) > 0 and (r.census.classes as Array).size() > 0, "the census counts nodes by class")
 	_check((r.script_functions as Dictionary).has("ok"), "script functions report a table or why not")
 	var text := "\n".join(DotProfilerReport.to_text(r))
