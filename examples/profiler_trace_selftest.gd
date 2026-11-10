@@ -3,8 +3,8 @@ extends Node
 ## The call tree, physics ticks, monitors, queries, worst frames, folded export, compare and capture key:
 ## a tree built from a hand-made frame, then a live recording of a physics script that casts rays.
 
-const SECTIONS := 3
-const CHECKS := 29
+const SECTIONS := 4
+const CHECKS := 44
 const DIR := "user://profiler_trace_selftest"
 
 var _sections := 0
@@ -20,12 +20,14 @@ class Caster:
 		var q := PhysicsRayQueryParameters3D.create(Vector3(0, 0, 0), Vector3(0, 0, -10))
 		for i in 3:
 			var _hit := DotSpaceQuery.ray(get_world_3d().direct_space_state, q, &"selftest.caster")
+			DotProfilerCounts.add(&"selftest.cast")
 		DotFrameCost.add(&"selftest.caster", t, "3 rays")
 
 
 func _ready() -> void:
 	var _r := DotPaths.remove_tree(DIR)
 	_tree()
+	_suspects()
 	await _live()
 	_compare()
 	var _c := DotPaths.remove_tree(DIR)
@@ -75,6 +77,36 @@ func _tree() -> void:
 	_sections += 1
 
 
+func _suspects() -> void:
+	_sections += 1
+	var tree := [
+		{"path": "frame", "name": "frame", "ms": 10.0, "self_ms": 0.0, "calls": 1.0},
+		{"path": "frame;physics;scripts", "name": "scripts", "ms": 6.0, "self_ms": 1.0, "calls": 2.0},
+		{"path": "frame;physics;scripts;brain", "name": "brain", "ms": 4.0, "self_ms": 3.0, "calls": 8.0},
+		{"path": "frame;physics;scripts;brain;los", "name": "los", "ms": 1.0, "self_ms": 1.0, "calls": 16.0},
+		{"path": "frame;physics;scripts;move;los", "name": "los", "ms": 1.0, "self_ms": 1.0, "calls": 4.0},
+		{"path": "frame;process;hud", "name": "hud", "ms": 0.5, "self_ms": 0.5, "calls": 1.0},
+		{"path": "frame;wait", "name": "wait", "ms": 3.0, "self_ms": 3.0, "calls": 1.0}]
+	var report := {"tree": tree, "budget_ms": 20.0, "physics_ticks": {"per_frame": 2.0, "per_second": 50.0},
+		"unit": {"name": "players", "count": {"avg": 4.0}}}
+	DotProfilerSuspects.attach(report, 2, 100.0)
+	var fns: Array = report.functions
+	var brain: Dictionary = fns[0]
+	_check(brain.name == "brain" and is_equal_approx(brain.self_ms, 1.5) and is_equal_approx(brain.total_ms, 2.0) and is_equal_approx(brain.calls, 4.0),
+		"a span under physics is per tick: self, total and calls")
+	_check(is_equal_approx(brain.us_per_call, 500.0) and is_equal_approx(brain.us_per_unit, 375.0), "cost per call and per unit")
+	var los: Array = fns.filter(func(x: Dictionary) -> bool: return x.name == "los")
+	_check(los.size() == 1 and int(los[0].paths) == 2 and is_equal_approx(los[0].self_ms, 1.0) and is_equal_approx(los[0].calls, 10.0), "one name called from two places is one row")
+	var hud: Array = fns.filter(func(x: Dictionary) -> bool: return x.name == "hud")
+	_check(hud.size() == 1 and hud[0].per == "frame" and fns.filter(func(x: Dictionary) -> bool: return x.name == "wait" or x.name == "frame").is_empty(),
+		"a span outside physics is per frame; the frame and the wait are no function")
+	var sus: Array = report.suspects
+	_check(sus.size() == 2 and sus[0].name == "brain" and is_equal_approx(sus[0].pct_budget, 7.5) and is_equal_approx(sus[0].pct_target, 375.0),
+		"the top suspects with their share of the 20 ms tick and of the 100 us target")
+	_check(is_equal_approx(report.budget.sim_ms_per_tick, 3.0) and is_equal_approx(report.budget.sim_us_per_unit, 750.0), "all physics scripts per tick and per unit")
+	_check("\n".join(DotProfilerSuspects.lines(report)).contains("target 100 us per player per tick"), "the table names the target")
+
+
 func _live() -> void:
 	var floor_body := StaticBody3D.new()
 	var shape := CollisionShape3D.new()
@@ -90,7 +122,10 @@ func _live() -> void:
 	prof.config.record_dir = DIR
 	prof.config.capture_seconds = 0.6
 	prof.config.sample_hz = 0.0
+	prof.config.per_unit = "casters"
+	prof.config.unit_target_us = 50.0
 	add_child(prof)
+	prof.add_counter(&"casters", func() -> int: return 2)
 	prof.enable_capture_key()
 	_check(InputMap.has_action(DotProfiler.CAPTURE_ACTION) and prof.is_processing_input(), "the capture key is bound")
 	var press := InputEventAction.new()
@@ -115,6 +150,21 @@ func _live() -> void:
 	_check(FileAccess.file_exists(String(res.value).get_basename() + ".folded"), "a .folded file sits next to the report")
 	var text := FileAccess.get_file_as_string(String(res.value).get_basename() + ".txt")
 	_check(text.contains("Call tree") and text.contains("Physics ticks:") and text.contains("Systems (reported"), "the text keeps the old sections and adds the new")
+	var fn: Array = (r.functions as Array).filter(func(x: Dictionary) -> bool: return x.name == "selftest.caster")
+	print("DBG fn ", fn, " budget ", r.budget)
+	_check(fn.size() == 1 and fn[0].per == "tick" and absf(float(fn[0].calls) - 1.0) < 0.1 and float(fn[0].total_ms) >= float(fn[0].self_ms),
+		"a span is one function row, per tick, with its calls")
+	_check(String(r.budget.unit) == "casters" and is_equal_approx(r.budget.units, 2.0) and is_equal_approx(fn[0].us_per_unit, float(fn[0].self_ms) * 500.0),
+		"cost per unit divides by the counter profiler_per_unit names")
+	var sus: Array = r.suspects
+	_check(not sus.is_empty() and sus.size() <= 10 and float(sus[0].self_ms_per_frame) >= float(sus[-1].self_ms_per_frame) and sus[0].has("pct_budget") and sus[0].has("pct_target"),
+		"the suspects are ranked by self time, against the budget and the target")
+	_check(is_equal_approx(r.engine.queries_per_tick, 3.0) and float(r.engine.query_us_per_call) > 0.0, "engine work counts the queries per tick")
+	_check(is_equal_approx(r.engine.counts["selftest.cast"].per_tick, 3.0) and not DotProfilerCounts.enabled, "a count the game reports is per tick, and counting stops with the recording")
+	_check((r.engine as Dictionary).has("nodes_added_per_tick") and (r.engine as Dictionary).has("objects_grown_per_tick"), "engine work carries node and object growth")
+	_check((r.monitors as Dictionary).has("render_cpu_ms") and (r.monitors as Dictionary).has("render_gpu_ms"), "render cpu and gpu ms are recorded by default")
+	_check(text.find("suspects") >= 0 and text.find("suspects") < text.find("Systems (reported") and text.contains("Engine work per tick") and text.contains("Functions (traced") and text.contains("drawn per frame"),
+		"the text opens with the suspects and has the engine and function tables")
 	var _s := prof.toggle_capture()
 	_check(prof.is_recording(), "the toggle starts a capture")
 	var stopped := prof.toggle_capture()

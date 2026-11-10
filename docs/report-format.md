@@ -29,6 +29,20 @@ A recording writes three files next to each other in `profiler_record_dir`: `pro
 | `overhead` | `{on_frame_avg_ms, on_frame_max_ms, spans_per_frame, trace}`: the profiler's own per-frame cost while recording, measured around its frame handler. |
 | `deep` | Empty unless `profiler_deep` is on: `{ok, file, pid, command}` or `{ok: false, reason}` ([deep-mode.md](deep-mode.md)). |
 
+## Where the time goes: suspects, functions, engine
+
+These are on by default and need `profiler_trace` (the tree) for the first three.
+
+| Key | Meaning |
+| --- | --- |
+| `suspects` | The `profiler_suspects_top` costliest `functions` rows by self time per frame: `{name, path, per, self_ms, total_ms, calls, us_per_call, self_ms_per_frame, pct_budget, us_per_unit, total_us_per_unit, pct_target}`. `pct_budget` is self time against the tick budget (`per` "tick") or the frame budget ("frame"); `pct_target` is `us_per_unit` against `profiler_unit_target_us`. The text report opens with this table. |
+| `functions` | Every traced span summed by name over the whole tree, so one name called from several places is one row: `{name, path, per, paths, self_ms, total_ms, calls, us_per_call, self_us_per_call, self_ms_per_frame, total_ms_per_frame, us_per_unit, total_us_per_unit}`. A span under `frame;physics` is `per` "tick" (ms and calls per physics tick), any other "frame"; `path` is where most of its self time ran, `paths` in how many places. The engine's own nodes appear as "physics scripts (no span)" (script time no span covers), "physics engine step", "process scripts (no span)" and "render (engine)". |
+| `budget` | `{tick_ms, tick_rate, frame_ms, ticks_per_frame, unit, units, target_us, sim_ms_per_tick, sim_pct_tick, sim_us_per_unit}`: what the suspects are held against, and all physics scripts per tick and per unit. |
+| `unit` | `{name, count}` for `profiler_per_unit`, `count` as `{min, avg, p50, p95, p99, max}` per frame. |
+| `engine` | Work no span names, per physics tick: `{ticks, frames, queries_per_tick, query_ms_per_tick, query_us_per_call, nodes_added, nodes_removed, nodes_added_per_tick, nodes_removed_per_tick, objects_grown_per_tick, objects_net, resources_grown_per_tick, resources_net, static_kb_grown_per_tick, static_kb_net, static_peak_mb, counts, not_counted}`. `*_grown` sums the rise of the engine's object, resource and static memory counts over the frames they rose: a floor for what was created, since a frame that frees as much as it makes shows none. `counts` is `{name: {total, per_tick, per_frame}}` for what the game reported with `DotProfilerCounts.add(name)` (signal emits, lookups, container builds); the engine counts neither signal emits nor single allocations in a release build, and `not_counted` says so. |
+
+A span is a function when the game times one: `DotFrameCost.add(name, since)` around a function body, nested as deep as wanted. A release build has no script debugger, so `script_functions` (function and line from the engine's script profiler) stays a debug-build tool; spans work in every build.
+
 ## Context keys
 
 | Key | Meaning |
@@ -36,7 +50,7 @@ A recording writes three files next to each other in `profiler_record_dir`: `pro
 | `context` | `{machine, <game keys>}`. `machine` is `{os, cpu, cores, ram_mb, gpu, gpu_vendor, driver, renderer, godot, debug_build, tick_rate, max_fps, window, vsync, display}`; `build` is `{name, version, commit, branch, source, addons}`: the commit comes from the checkout's `.git` (`source` "git", with each linked addon's commit in `addons`), else from `build_id.json` beside `project.godot` ("stamp", written by `addons/dot_profiler/tools/build_stamp.sh` before a pack or an export), else "unknown". `launch` is the command line, secrets masked. `cvars` (when a console is bound) is `{count, changed, values}`: every console variable as text, and those changed since the console was bound as `"now (was then)"`; a value set by a launch argument shows in `values` and `launch` only. A game adds keys with `DotProfiler.add_context(key, provider)` (map, bots, natives loaded). Read when the recording starts. The text report prints one line per key and only the size of a nested value over 12 entries. |
 | `extras` | `{<key>: Dictionary}` from `DotProfiler.add_recording_hook(key, begin, end)`: what `end` returned when the recording stopped (a game's native timers). A hook returning an empty Dictionary is left out. |
 
-The capture key and `profiler_capture` turn `render_detail` on for that capture, so `render_cpu_ms` and `render_gpu_ms` are there; `profiler_reference` (a JSON path) diffs every written report against that file and saves `<report>.diff.txt`.
+`render_cpu_ms` and `render_gpu_ms` are in every recording (`profiler_render_time`); the capture key and `profiler_capture` turn the rest of `render_detail` on for that capture; `profiler_reference` (a JSON path) diffs every written report against that file and saves `<report>.diff.txt`.
 
 ## Detail keys
 

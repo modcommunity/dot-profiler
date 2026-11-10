@@ -51,6 +51,15 @@ var render_detail := false
 var viewport := RID()
 ## Counted each frame: [{group, prefix, count: Callable}] ([method DotProfiler.add_counter]).
 var counters: Array[Dictionary] = []
+## Read render cpu and gpu ms of [member viewport] each frame, without the rest of [member render_detail].
+var render_time := false
+## What costs are divided by (players): {name, count: Callable}, read each frame; empty is none.
+var unit: Dictionary = {}
+## Nodes that entered and left the tree while recording ([DotProfiler] counts them).
+var nodes_added := 0
+var nodes_removed := 0
+## Totals a game counted through [DotProfilerCounts]: {name: total}.
+var counts: Dictionary = {}
 
 var _frame_ms := PackedFloat32Array()
 var _phase_ms := {}
@@ -68,6 +77,10 @@ var _t := PackedFloat32Array()
 var _ema := 0.0
 var _flagged: Array[Dictionary] = []
 var _counts: Array[Array] = []
+var _units := PackedFloat32Array()
+var _churn_last := PackedFloat64Array()
+var _churn_up := PackedFloat64Array()
+var _churn_first := PackedFloat64Array()
 
 
 func _init() -> void:
@@ -84,9 +97,17 @@ func begin() -> void:
 			_mon[k] = []
 		if viewport.is_valid():
 			RenderingServer.viewport_set_measure_render_time(viewport, true)
+	elif render_time:
+		_mon["render_cpu_ms"] = []
+		_mon["render_gpu_ms"] = []
+		if viewport.is_valid():
+			RenderingServer.viewport_set_measure_render_time(viewport, true)
 	_counts.clear()
 	for _c in counters:
 		_counts.append([])
+	_churn_first = _churn_now()
+	_churn_last = _churn_first.duplicate()
+	_churn_up = PackedFloat64Array([0.0, 0.0, 0.0])
 
 
 ## The monitor names [member render_detail] adds.
@@ -117,6 +138,18 @@ func add(rec: Dictionary, ticks: PackedInt64Array) -> void:
 			(_mon[m[0]] as Array).append(Performance.get_monitor(m[1]) * float(m[2]))
 	if render_detail:
 		_add_render()
+	elif render_time:
+		var ok := viewport.is_valid()
+		(_mon.render_cpu_ms as Array).append((RenderingServer.viewport_get_measured_render_time_cpu(viewport) if ok else 0.0) + RenderingServer.get_frame_setup_time_cpu())
+		(_mon.render_gpu_ms as Array).append(RenderingServer.viewport_get_measured_render_time_gpu(viewport) if ok else 0.0)
+	if not unit.is_empty():
+		var u: Variant = (unit.count as Callable).call()
+		var _u := _units.append(float(u) if u is int or u is float else 0.0)
+	var now := _churn_now()
+	for i in now.size():
+		if now[i] > _churn_last[i]:
+			_churn_up[i] += now[i] - _churn_last[i]
+	_churn_last = now
 	for i in counters.size():
 		var c: Variant = (counters[i].count as Callable).call()
 		_counts[i].append(float(c) if c is int or c is float else 0.0)
@@ -178,6 +211,9 @@ func to_report(min_tree_ms: float = 0.001) -> Dictionary:
 			"spans_per_frame": float(_spans) / frames, "trace": _spans > 0},
 		"growth": _growth(),
 	}
+	out["engine"] = _engine(q_rows, frames)
+	if not unit.is_empty():
+		out["unit"] = {"name": String(unit.get("name", "")), "count": stats_of(_units)}
 	if timeline:
 		out["timeline"] = _timeline_report()
 	if not counters.is_empty():
@@ -186,6 +222,46 @@ func to_report(min_tree_ms: float = 0.001) -> Dictionary:
 			g.append({"group": counters[i].group, "prefix": counters[i].prefix, "count": stats_of(PackedFloat32Array(_counts[i]))})
 		out["groups"] = g
 	return out
+
+
+## Objects, resources and static bytes alive now: what [code]engine[/code] takes its growth from.
+static func _churn_now() -> PackedFloat64Array:
+	return PackedFloat64Array([Performance.get_monitor(Performance.OBJECT_COUNT),
+		Performance.get_monitor(Performance.OBJECT_RESOURCE_COUNT), Performance.get_monitor(Performance.MEMORY_STATIC)])
+
+
+## Engine work no span names, per tick: queries, nodes entering and leaving the tree, and the growth of objects,
+## resources and static memory summed over the frames it grew in (a floor for what was created; a frame that
+## frees as much as it makes shows none). Signal emits and single allocations are not counted by a release engine.
+func _engine(q_rows: Array, frames: int) -> Dictionary:
+	var ticks := maxf(float(_ticks), 1.0)
+	var q_calls := 0.0
+	var q_ms := 0.0
+	for r: Dictionary in q_rows:
+		q_calls += float(r.calls)
+		q_ms += float(r.ms)
+	var named := {}
+	for k: Variant in counts:
+		var total := float(counts[k])
+		named[String(k)] = {"total": total, "per_tick": total / ticks, "per_frame": total / maxf(float(frames), 1.0)}
+	var grew := _churn_up if _churn_up.size() == 3 else PackedFloat64Array([0.0, 0.0, 0.0])
+	var net := PackedFloat64Array([0.0, 0.0, 0.0])
+	if _churn_first.size() == 3 and _churn_last.size() == 3:
+		for i in 3:
+			net[i] = _churn_last[i] - _churn_first[i]
+	return {
+		"ticks": _ticks, "frames": frames,
+		"queries_per_tick": q_calls / ticks, "query_ms_per_tick": q_ms / ticks,
+		"query_us_per_call": q_ms * 1000.0 / maxf(q_calls, 1.0),
+		"nodes_added": nodes_added, "nodes_removed": nodes_removed,
+		"nodes_added_per_tick": nodes_added / ticks, "nodes_removed_per_tick": nodes_removed / ticks,
+		"objects_grown_per_tick": grew[0] / ticks, "objects_net": net[0],
+		"resources_grown_per_tick": grew[1] / ticks, "resources_net": net[1],
+		"static_kb_grown_per_tick": grew[2] / 1024.0 / ticks, "static_kb_net": net[2] / 1024.0,
+		"static_peak_mb": OS.get_static_memory_peak_usage() / 1048576.0,
+		"counts": named,
+		"not_counted": "signal emits and single allocations: the engine counts neither in a release build; a game reports them with DotProfilerCounts.add",
+	}
 
 
 ## Fills each [code]groups[/code] row of a built report with the systems under its prefix and their cost per unit.

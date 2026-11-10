@@ -70,6 +70,8 @@ extends DotConfig
 @export var rec_queries: bool = true
 @export var rec_growth: bool = true
 @export var rec_overhead: bool = true
+@export var rec_suspects: bool = true
+@export var rec_engine: bool = true
 
 ## How far, as a fraction of the period, a spike may land from the beat and still count as on it.
 @export var period_tolerance: float = 0.12
@@ -118,6 +120,18 @@ extends DotConfig
 
 ## While recording, also read texture and buffer memory, resources, the viewport's draw split and render cpu/gpu ms.
 @export var render_detail: bool = false
+
+## While recording, read the viewport's render cpu and gpu ms every frame (the render line of the report).
+@export var render_time: bool = true
+
+## Suspects the report lists first: the costliest spans by self time against the tick budget. 0 lists none.
+@export var suspects_top: int = 10
+
+## The counter ([method DotProfiler.add_counter]) or SceneTree group costs are divided by, e.g. players; empty is none.
+@export var per_unit: String = ""
+
+## Microseconds one unit of [member per_unit] may cost per physics tick; the suspects are held against it. 0 is no target.
+@export var unit_target_us: float = 0.0
 
 ## Counted every frame while recording: comma-separated `group` or `group:system-prefix` (SceneTree groups, or
 ## counters a game adds with [method DotProfiler.add_counter]); the report gives each prefixed system's cost per unit.
@@ -178,6 +192,8 @@ func validate() -> DotResult:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_sample_hz must be 0 to 60.")
 	if worst_frames < 0 or worst_frames > 50 or capture_seconds <= 0.0 or capture_seconds > 3600.0:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_worst_frames must be 0 to 50 and profiler_capture_seconds above 0, at most 3600.")
+	if suspects_top < 0 or suspects_top > 100 or unit_target_us < 0.0:
+		return DotResult.fail(DotError.CODE_INVALID, "profiler_suspects_top must be 0 to 100 and profiler_unit_target_us 0 or more.")
 	if script_top < 0 or script_top > 500:
 		return DotResult.fail(DotError.CODE_INVALID, "profiler_script_top must be 0 to 500.")
 	for entry in parse_groups(groups):

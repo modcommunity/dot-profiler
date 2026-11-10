@@ -23,6 +23,8 @@ static func lines(r: Dictionary, top: int = 20) -> PackedStringArray:
 	out.append_array(_monitors(r))
 	out.append_array(_growth(r))
 	out.append_array(_groups(r))
+	out.append_array(_engine(r))
+	out.append_array(DotProfilerSuspects.function_lines(r))
 	out.append_array(_tree(r))
 	out.append_array(_scripts(r, top))
 	out.append_array(_queries(r, top))
@@ -88,7 +90,39 @@ static func _breakdown(r: Dictionary) -> PackedStringArray:
 			float((m.get("render_cpu_ms", {}) as Dictionary).get("avg", 0.0)), float((m.get("render_cpu_ms", {}) as Dictionary).get("p95", 0.0)),
 			float((m.get("render_gpu_ms", {}) as Dictionary).get("avg", 0.0)), float((m.get("render_gpu_ms", {}) as Dictionary).get("p95", 0.0))])
 	else:
-		out.append("  render cpu/gpu ms: not recorded (profiler_render_detail 1, or use the capture key, records them)")
+		out.append("  render cpu/gpu ms: not recorded (profiler_render_time 1 records them)")
+	if m.has("draw_calls"):
+		out.append("  drawn per frame: %.0f draw calls, %.0f primitives, %.0f objects (p95 %.0f / %.0f / %.0f)" % [
+			_stat(m, "draw_calls"), _stat(m, "primitives"), _stat(m, "objects_drawn"),
+			_stat(m, "draw_calls", "p95"), _stat(m, "primitives", "p95"), _stat(m, "objects_drawn", "p95")])
+	return out
+
+
+static func _stat(m: Dictionary, key: String, stat: String = "avg") -> float:
+	return float((m.get(key, {}) as Dictionary).get(stat, 0.0))
+
+
+static func _engine(r: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	var e: Dictionary = r.get("engine", {})
+	if e.is_empty():
+		return out
+	out.append("")
+	out.append("Engine work per tick (outside the spans; %d ticks):" % int(e.get("ticks", 0)))
+	out.append("  physics queries        %8.1f calls  %8.3f ms  %6.1f us/call" % [float(e.get("queries_per_tick", 0.0)),
+		float(e.get("query_ms_per_tick", 0.0)), float(e.get("query_us_per_call", 0.0))])
+	out.append("  nodes entering tree    %8.2f        leaving %.2f  (%d / %d in all)" % [float(e.get("nodes_added_per_tick", 0.0)),
+		float(e.get("nodes_removed_per_tick", 0.0)), int(e.get("nodes_added", 0)), int(e.get("nodes_removed", 0))])
+	out.append("  objects grown          %8.2f        net %+.0f over the recording" % [float(e.get("objects_grown_per_tick", 0.0)), float(e.get("objects_net", 0.0))])
+	out.append("  resources grown        %8.2f        net %+.0f" % [float(e.get("resources_grown_per_tick", 0.0)), float(e.get("resources_net", 0.0))])
+	out.append("  static memory grown    %8.2f KB     net %+.0f KB, peak %.0f MB" % [float(e.get("static_kb_grown_per_tick", 0.0)),
+		float(e.get("static_kb_net", 0.0)), float(e.get("static_peak_mb", 0.0))])
+	var counts: Dictionary = e.get("counts", {})
+	var names: Array = counts.keys()
+	names.sort_custom(func(a: Variant, b: Variant) -> bool: return float(counts[a].total) > float(counts[b].total))
+	for k: Variant in names:
+		out.append("  %-22s %8.2f        (%.0f in all)" % [String(k).left(22), float(counts[k].per_tick), float(counts[k].total)])
+	out.append("  grown = summed over the frames the count rose (a floor for what was created). Not counted: %s." % String(e.get("not_counted", "")))
 	return out
 
 

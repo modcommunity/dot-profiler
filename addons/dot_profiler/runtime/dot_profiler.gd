@@ -89,6 +89,7 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
+	_unhook_nodes()
 	_stop_watch()
 	DotFrameCost.reset()
 	if register_as_service:
@@ -140,7 +141,13 @@ func start_recording(seconds: float = 0.0) -> DotResult:
 	_session.render_detail = config.render_detail or _force_render
 	_session.viewport = get_viewport().get_viewport_rid()
 	_session.counters = _recording_counters()
+	_session.render_time = config.render_time
+	_session.unit = _unit_counter()
 	_session.begin()
+	DotProfilerCounts.begin()
+	if not get_tree().node_added.is_connected(_on_node_added):
+		get_tree().node_added.connect(_on_node_added)
+		get_tree().node_removed.connect(_on_node_removed)
 	_context = _read_context()
 	for h in _hooks:
 		(h.begin as Callable).call()
@@ -170,6 +177,9 @@ func stop_recording() -> DotResult:
 	if not _recording:
 		return DotResult.fail(DotError.CODE_STATE, "No recording is running.")
 	_recording = false
+	_unhook_nodes()
+	if _session != null:
+		_session.counts = DotProfilerCounts.end()
 	if _scripts != null:
 		_script_report = _scripts.stop(config.script_top, _rec_frames.size(),
 			DotProfilerConfig.parse_buckets(config.script_buckets))
@@ -204,6 +214,8 @@ func build_report() -> Dictionary:
 		"period": DotProfilerPeriod.describe_found(_all_period.detect()),
 		"sample_hz": config.sample_hz, "samples": _rec_samples, "deep": _deep}
 	if _session != null:
+		if _recording:
+			_session.counts = DotProfilerCounts.peek()
 		meta.merge(_session.to_report())
 		meta["context"] = _context
 		meta["extras"] = _read_extras()
@@ -213,6 +225,8 @@ func build_report() -> Dictionary:
 		meta["census"] = _census
 	var report := DotProfilerReport.build(_rec_frames, _rec_spikes, _rec_systems, _rec_phases, meta)
 	DotProfilerSession.attach_group_systems(report)
+	if config.suspects_top > 0:
+		DotProfilerSuspects.attach(report, config.suspects_top, config.unit_target_us)
 	DotProfilerCatalog.strip(report, config)
 	return report
 
@@ -318,6 +332,34 @@ static func census_diff(a: Dictionary, b: Dictionary) -> Dictionary:
 	rows.sort_custom(func(p: Dictionary, q: Dictionary) -> bool:
 		return absi(p.delta) > absi(q.delta) or (p.delta == q.delta and p.end > q.end))
 	return {"start_nodes": total_a, "end_nodes": total_b, "classes": rows}
+
+
+func _on_node_added(_node: Node) -> void:
+	if _session != null:
+		_session.nodes_added += 1
+
+
+func _on_node_removed(_node: Node) -> void:
+	if _session != null:
+		_session.nodes_removed += 1
+
+
+func _unhook_nodes() -> void:
+	if is_inside_tree() and get_tree().node_added.is_connected(_on_node_added):
+		get_tree().node_added.disconnect(_on_node_added)
+		get_tree().node_removed.disconnect(_on_node_removed)
+
+
+## The counter named by profiler_per_unit as {name, count}, or {} when none is set.
+func _unit_counter() -> Dictionary:
+	var unit_name := config.per_unit.strip_edges()
+	if unit_name == "":
+		return {}
+	for c: Dictionary in _counters:
+		if String(c.group) == unit_name:
+			return {"name": unit_name, "count": c.count}
+	var tree := get_tree()
+	return {"name": unit_name, "count": func() -> int: return tree.get_node_count_in_group(StringName(unit_name))}
 
 
 func _recording_counters() -> Array[Dictionary]:

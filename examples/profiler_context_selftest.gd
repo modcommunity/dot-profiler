@@ -42,7 +42,7 @@ func _ready() -> void:
 	var text := "\n".join(DotProfilerReport.to_text(r))
 	_check(text.contains("Machine:") and text.contains("Game: commit=abc123") and text.contains("Per frame:") and text.contains("unaccounted")
 		and text.contains("native: tick_us=12.5") and text.contains("dropped"), "the text shows context, breakdown, extras and dropped ticks")
-	_check(not (r.monitors as Dictionary).has("render_gpu_ms"), "a plain recording leaves render cpu/gpu out")
+	_check((r.monitors as Dictionary).has("render_gpu_ms"), "a plain recording carries render cpu/gpu by default")
 	_check(FileAccess.file_exists(prof.last_saved_path()), "the report file exists")
 	prof.config.reference = prof.last_saved_path()
 	var cap := await _record(prof, true)
