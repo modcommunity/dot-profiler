@@ -12,6 +12,8 @@ const SERVICE := &"dot_profiler"
 const CAUSE_SHARE := 0.25
 ## The input action that starts a capture of profiler_capture_seconds, or stops and writes it.
 const CAPTURE_ACTION := &"profiler_capture"
+## Opens and closes the options window over the game; bound to Shift+F10 by [method enable_menu_key].
+const MENU_ACTION := &"profiler_menu"
 
 ## A frame over budget, attributed: {t, ms, cause, what, hints, period, physics, script, render, wait, systems}.
 signal spike(info: Dictionary)
@@ -84,7 +86,7 @@ func _ready() -> void:
 	config.changed.connect(_apply)
 	if register_as_service:
 		DotRegistry.register(SERVICE, self)
-	set_process_input(InputMap.has_action(CAPTURE_ACTION))
+	set_process_input(InputMap.has_action(CAPTURE_ACTION) or InputMap.has_action(MENU_ACTION))
 	_apply()
 
 
@@ -397,11 +399,31 @@ func enable_capture_key(keycode: Key = KEY_F10) -> void:
 		var ev := InputEventKey.new()
 		ev.keycode = keycode
 		InputMap.action_add_event(CAPTURE_ACTION, ev)
+	# The options window comes with the capture key, so every game that has F10 gets Shift+F10 too.
+	enable_menu_key(keycode)
+
+
+## Binds Shift+[param keycode] to [constant MENU_ACTION] when the project has no binding, and listens for it.
+func enable_menu_key(keycode: Key = KEY_F10) -> void:
+	DotProfilerWindow.bind_key(MENU_ACTION, keycode)
 	set_process_input(true)
 
 
+## True while the options window is up.
+func is_menu_open() -> bool:
+	return DotProfilerWindow.of(self) != null
+
+
+## Opens the options window over the game, or closes it when up. True when it is now open.
+func toggle_menu() -> bool:
+	return DotProfilerWindow.toggle(self)
+
+
 func _input(event: InputEvent) -> void:
-	if event.is_action_pressed(CAPTURE_ACTION, false, true):
+	if event.is_action_pressed(MENU_ACTION, false, true):
+		get_viewport().set_input_as_handled()
+		var _open := toggle_menu()
+	elif event.is_action_pressed(CAPTURE_ACTION, false, true):
 		var res := toggle_capture()
 		if not res.ok:
 			DotLog.warn(CHANNEL, "capture: %s" % res.error.message)
@@ -515,6 +537,8 @@ func bind_console(local: Object) -> void:
 		func(_a: PackedStringArray) -> Variant: return describe_lines())
 	local.call(&"add_command", &"profiler_capture", "Start a capture of profiler_capture_seconds, or stop and write it.",
 		func(_a: PackedStringArray) -> Variant: return toggle_capture())
+	local.call(&"add_command", &"profiler_menu", "Open or close the profiler options window (also Shift+F10).",
+		func(_a: PackedStringArray) -> Variant: return DotResult.success("open" if toggle_menu() else "closed"))
 	local.call(&"add_command", &"profiler_compare", "Compare recordings (JSON paths): two paths, one path against the newest, none for the two newest (or profiler_reference against the newest).",
 		func(a: PackedStringArray) -> Variant: return compare_recordings(a[0] if not a.is_empty() else config.reference, a[1] if a.size() > 1 else ""))
 

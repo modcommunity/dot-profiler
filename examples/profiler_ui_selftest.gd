@@ -1,10 +1,11 @@
 extends Node
 
 ## The menu and look options: the catalog, the panel's switches and custom seconds, report sections left out when
-## switched off, the overlay's corner, size and opacity, the merged net graph, and saved look settings.
+## switched off, the overlay's corner, size and opacity, the merged net graph, saved look settings, and the
+## in-game options window on Shift+F10.
 
-const SECTIONS := 6
-const CHECKS := 31
+const SECTIONS := 7
+const CHECKS := 36
 const DIR := "user://profiler_ui_selftest"
 
 var _sections := 0
@@ -20,6 +21,7 @@ func _ready() -> void:
 	await _panel()
 	await _overlay()
 	await _recording()
+	await _window()
 	var _c := DotPaths.remove_tree(DIR)
 	print("profiler_ui_selftest: %d of %d sections, %d checks (want %d), %d failed" % [_sections, SECTIONS, _checks, CHECKS, _failed])
 	var ok := _failed == 0 and _sections == SECTIONS and _checks == CHECKS
@@ -175,6 +177,43 @@ func _recording() -> void:
 	var r: Dictionary = DotPaths.read_json(res.value).value if res.ok else {}
 	_check(res.ok and r.has("frame_stats") and not r.has("growth") and not r.has("queries") and not r.has("spikes"), "switched-off report sections are left out")
 	_check(is_equal_approx(float(r.get("seconds", 0.0)), 0.3), "a custom length is recorded")
+	prof.queue_free()
+	await get_tree().process_frame
+	_sections += 1
+
+
+func _key(keycode: Key, shift: bool) -> InputEventKey:
+	var ev := InputEventKey.new()
+	ev.keycode = keycode
+	ev.shift_pressed = shift
+	ev.pressed = true
+	return ev
+
+
+func _window() -> void:
+	var prof := _profiler()
+	add_child(prof)
+	prof.enable_capture_key()
+	var menu_ev := InputMap.action_get_events(DotProfiler.MENU_ACTION)
+	_check(menu_ev.size() == 1 and (menu_ev[0] as InputEventKey).shift_pressed and (menu_ev[0] as InputEventKey).keycode == KEY_F10
+		and InputMap.has_action(DotProfiler.CAPTURE_ACTION), "the capture key brings Shift+F10 for the options window")
+	var seen: Array[bool] = []
+	get_viewport().push_input(_key(KEY_F10, true))
+	await get_tree().process_frame
+	var win := DotProfilerWindow.of(prof)
+	if win != null:
+		win.pointer_mode_changed.connect(func(on: bool) -> void: seen.append(on))
+	_check(prof.is_menu_open() and win.is_in_group(&"dot_pointer_modal") and win.panel != null and not prof.is_recording(),
+		"Shift+F10 opens the window as a pointer modal, and does not start a capture")
+	(win.panel.controls["graph_scale_ms"] as SpinBox).value = 40.0
+	_check(is_equal_approx(prof.config.graph_scale_ms, 40.0) and DotProfilerConfig.UI_KEYS.has("graph_scale_ms"), "the graph's top is a look option and saved")
+	get_viewport().push_input(_key(KEY_ESCAPE, false))
+	await get_tree().process_frame
+	_check(not prof.is_menu_open() and seen.size() == 1 and not seen[0], "Esc closes the window and gives the mouse back")
+	var opened := prof.toggle_menu()
+	var closed := not prof.toggle_menu()
+	await get_tree().process_frame
+	_check(opened and closed and get_tree().get_nodes_in_group(&"dot_pointer_modal").is_empty(), "toggle_menu opens and closes, leaving nothing behind")
 	prof.queue_free()
 	await get_tree().process_frame
 	_sections += 1

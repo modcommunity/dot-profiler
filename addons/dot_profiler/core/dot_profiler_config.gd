@@ -149,7 +149,7 @@ extends DotConfig
 ## The settings the overlay's look is made of; the menu saves exactly these (see [method DotProfiler.save_ui_prefs]).
 const UI_KEYS: PackedStringArray = ["overlay_top", "overlay_text", "overlay_text_size", "overlay_scale",
 	"overlay_corner", "overlay_offset_x", "overlay_offset_y", "overlay_opacity", "overlay_bg_opacity", "graph",
-	"graph_height", "graph_frames", "graph_col_px", "graph_legend", "overlay_merge_net"]
+	"graph_height", "graph_scale_ms", "graph_frames", "graph_col_px", "graph_legend", "overlay_merge_net"]
 const CORNERS: PackedStringArray = ["top_left", "top_right", "bottom_left", "bottom_right"]
 
 var _cvars: Dictionary = {}

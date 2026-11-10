@@ -27,6 +27,7 @@ const LOOK: Array = [
 	["overlay_scale", "Overall size", "float", 0.5, 3.0, 0.1],
 	["graph", "Show graph", "bool", 0, 0, 0],
 	["graph_height", "Graph height (px)", "int", 20, 400, 5],
+	["graph_scale_ms", "Graph top (ms, 0 = auto)", "float", 0.0, 1000.0, 1.0],
 	["graph_frames", "Graph frames kept", "int", 20, 600, 10],
 	["graph_col_px", "Pixels per frame", "int", 1, 6, 1],
 	["graph_legend", "Graph legend", "bool", 0, 0, 0],
