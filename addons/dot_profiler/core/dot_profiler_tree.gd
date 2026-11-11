@@ -29,6 +29,12 @@ var samples: Array[Array] = []
 
 var _child := {}
 var _span_names: Array = []
+## One frame's incl, excl and calls by node id, and the ids touched in order: dense scratch reset after each
+## frame, because a Dictionary of PackedInt64Array rows copied each row on every write.
+var _f_incl := PackedInt64Array()
+var _f_excl := PackedInt64Array()
+var _f_calls := PackedInt64Array()
+var _f_seen := PackedInt32Array()
 
 
 ## Adds one frame. [param rec] is a DotHitchLog record (usec, events); [param ticks] the frame's physics ticks
@@ -112,33 +118,48 @@ func _sum(ns: PackedInt64Array, ne: PackedInt64Array, nk: PackedInt32Array, pare
 	var n := ns.size()
 	var pid := PackedInt32Array()
 	var _r := pid.resize(n)
-	var fi := {}
 	# Parents come after their children, so walking backwards meets every parent first.
 	for i in range(n - 1, -1, -1):
 		var p := parent[i]
 		var ppid := pid[p] if p >= 0 else -1
-		pid[i] = _pid(ppid, nk[i])
+		var id := _pid(ppid, nk[i])
+		pid[i] = id
+		if id >= _f_calls.size():
+			var size := paths.size()
+			_r = _f_incl.resize(size)
+			_r = _f_excl.resize(size)
+			_r = _f_calls.resize(size)
 		var us := ne[i] - ns[i]
-		var row: PackedInt64Array = fi.get(pid[i], PackedInt64Array([0, 0, 0]))
-		row[0] += us
-		row[1] += us
-		row[2] += 1
-		fi[pid[i]] = row
+		if _f_calls[id] == 0:
+			var _s := _f_seen.append(id)
+		_f_incl[id] += us
+		_f_excl[id] += us
+		_f_calls[id] += 1
 		if ppid >= 0:
-			var prow: PackedInt64Array = fi[ppid]
-			prow[1] -= us
-			fi[ppid] = prow
+			_f_excl[ppid] -= us
 	frames += 1
 	var flat := PackedInt64Array()
-	for id: int in fi:
-		var row: PackedInt64Array = fi[id]
-		incl_us[id] += row[0]
-		excl_us[id] += row[1]
-		calls[id] += row[2]
+	_r = flat.resize(_f_seen.size() * 4)
+	var j := 0
+	for id: int in _f_seen:
+		var inc := _f_incl[id]
+		var exc := _f_excl[id]
+		var cnt := _f_calls[id]
+		incl_us[id] += inc
+		excl_us[id] += exc
+		calls[id] += cnt
 		present[id] += 1
-		max_us[id] = maxi(max_us[id], row[0])
-		samples[id].append(row[0] / 1000.0)
-		flat.append_array([id, row[0], row[1], row[2]])
+		max_us[id] = maxi(max_us[id], inc)
+		samples[id].append(inc / 1000.0)
+		flat[j] = id
+		flat[j + 1] = inc
+		flat[j + 2] = exc
+		flat[j + 3] = cnt
+		j += 4
+		_f_incl[id] = 0
+		_f_excl[id] = 0
+		_f_calls[id] = 0
+	_f_seen.clear()
 	return flat
 
 
