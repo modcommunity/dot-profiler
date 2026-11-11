@@ -81,4 +81,4 @@ Exactly one reader drains `DotFrameCost` per frame (`DotHitchLog` while enabled)
 
 ## Existing frame clocks
 
-`DotHitchLog` keeps its old behaviour and fields; `systems` is an addition. dot-menu's `DotMenuFrameClock` and game-arena's frame probe keep working and can be retired in favour of a `DotProfiler` once each consumer moves.
+`DotHitchLog` keeps its old behaviour and fields; `systems` is an addition. dot-menu's `DotMenuFrameClock` and game-fatal-contact's frame probe keep working and can be retired in favour of a `DotProfiler` once each consumer moves.
